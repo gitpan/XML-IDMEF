@@ -1,4 +1,4 @@
-# $Id: IDMEF.pm,v 1.9 2002/11/19 09:26:13 erwan Exp $
+# $Id: IDMEF.pm,v 1.13 2002/12/20 09:23:04 erwan Exp $
 
 package XML::IDMEF;
 
@@ -27,7 +27,7 @@ our @EXPORT = qw(xml_encode
 		 extend_idmef	
 		 );
 
-our $VERSION = '0.07';
+our $VERSION = '0.08';
 
 
 
@@ -719,31 +719,29 @@ sub byte_to_string {
 ##         >                 &gt;
 ##         "                 &quot;
 ##         '                 &apos;
-##   REM: if you want to convert data to the BYTE[] format, use 'byte_to_string' instead
+##   and all non printable characters (ie charcodes >126 or <32 except 10) into
+##   the corresponding &#x00XX; form.
 ##
+
+# create a lookup array, start with filling it with xml encoded chars 
+my @xml_enc = map { sprintf("&\#x00%.2x;", $_) } 0..255;
+    
+# map the printable characters to themselves
+# NOTE: XML standard says encode all chars < 32 except 10, and all > 126 
+for (10,32..126) {
+    $xml_enc[$_] = chr($_);
+}
+
+# the special xml characters maps to their own encodings
+$xml_enc[ord('&')]  = "&amp;";
+$xml_enc[ord('<')]  = "&lt;";
+$xml_enc[ord('>')]  = "&gt;";
+$xml_enc[ord('"')]  = "&quot;";
+$xml_enc[ord('\'')] = "&apos;";
 
 sub xml_encode {
     my ($st) = @_;
-
-    if (defined $st) {
-	
-	# escape &#(.*); codes
-	$st =~ s/&\#x(.{4});/\#\#x$1;/g;
-	$st =~ s/&\#(.{2,3});/\#\#$1;/g;
-	
-	$st =~ s/&\#(.*);//g;
-	$st =~ s/&/&amp\;/g;
-	$st =~ s/</&lt\;/g;
-	$st =~ s/>/&gt\;/g;
-	$st =~ s/\"/&quot\;/g;
-	$st =~ s/\'/&apos\;/g;
-	
-	# replace back bin codes
-	$st =~ s/\#\#x(.{4});/&\#x$1;/g;
-	$st =~ s/\#\#(.{2,3});/&\#$1;/g;
-    }
-
-    return $st;
+    return join('', map { $xml_enc[ord($_)]} ($st =~ /(.)/gs));
 }
 
 
@@ -767,8 +765,8 @@ sub xml_encode {
 ##         &gt;               >
 ##         &quot              "
 ##         &apos              '
-##         &#xx;              xx in base 10
-##         &#xxxx;            xxxx in base 16
+##         &#XX;              XX in base 10
+##         &#xXXXX;           XXXX in base 16
 ##   It also decodes strings encoded with 'byte_to_string'
 ##
 
@@ -777,14 +775,14 @@ sub xml_decode {
 
     if (defined $st) {
 	
-	$st =~ s/&amp\;/&/g;
-	$st =~ s/&lt\;/</g;
-	$st =~ s/&gt\;/>/g;
-	$st =~ s/&quot\;/\"/g;
-	$st =~ s/&apos\;/\'/g;
+	$st =~ s/&amp\;/&/gs;
+	$st =~ s/&lt\;/</gs;
+	$st =~ s/&gt\;/>/gs;
+	$st =~ s/&quot\;/\"/gs;
+	$st =~ s/&apos\;/\'/gs;
 	
-	$st =~ s/&\#x(.{4});/chr(hex $1)/ge;
-	$st =~ s/&\#(.{2,3});/chr($1)/ge;
+	$st =~ s/&\#x(.{4});/chr(hex $1)/ges;
+	$st =~ s/&\#(.{2,3});/chr($1)/ges;
     }
 
     return $st;
@@ -889,7 +887,7 @@ sub out {
 
     # bad hack: Simple does not replace &<>"' correctly, nor does it handle &#....;,
     # so we have to clean after:
-    $out =~ s/&amp;/&/g;
+    $out =~ s/&amp;/&/gs;
 
     return $out;
 }
@@ -1399,7 +1397,8 @@ sub contains {
     # to $tag, until we either find the last tag or have searched
     # the whole tree and not found the path
     # this is a recursive algorithm
-    return search_for_path($idmef, splice(@{$EXPAND_PATH->{$tag}}, 2));
+    my $length = @{$EXPAND_PATH->{$tag}}-1;
+    return search_for_path($idmef, @{$EXPAND_PATH->{$tag}}[2..$length]);
 }
 
 
@@ -1500,20 +1499,16 @@ sub create_time {
 
     # add time stamp
     my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = gmtime($utc);
-    $year =~ s/^1/20/;
-    $mon  = "0".$mon  if (length($mon) == 1);
-    $mday = "0".$mday if (length($mday) == 1);
-    $hour = "0".$hour if (length($hour) == 1);
-    $min  = "0".$min  if (length($min) == 1);
-    $sec  = "0".$sec  if (length($sec) == 1);
-    add($idmef, $name."CreateTime", "$year-$mon-$mday"."T$hour:$min:$sec"."Z");
+    $year += 1900;
+    $mon  += 1;
 
-    # add ntp stamp (cf rfc 1305 for a definition of ntpstamps) 
-    # "At 0h on 1 January 1972 (MJD 41,317.0), the
-    # first tick of the UTC Era, the NTP clock was set to 2,272,060,800,
-    # re presenting the number of standard seconds since 0h on 1 January 1900"
-    $utc = $utc + 2272060800;
+    add($idmef, 
+	$name."CreateTime", 
+	sprintf("%04d-%02d-%02d-T%02d:%02d:%02dZ",
+		$year, $mon, $mday, $hour, $min, $sec));
 
+    # seconds between 1900-01-01 and 1970-01-01
+    $utc = $utc + 2208988800;
     # translate utc to hex!!
     $utc = sprintf "%x", $utc;
 
@@ -1954,6 +1949,8 @@ You do not need this function if you are using add() calls (which already calls 
          "                 &quot;
          '                 &apos;
 
+It also converts all non printable characters (ie charcodes >126 or <32 except 10) into the corresponding &#x00XX; xml form.
+
 REM: if you want to convert data to the BYTE[] format, use 'byte_to_string' instead
 
 =back
@@ -1981,8 +1978,8 @@ You do not need this function with 'to_hash' (which already calls it). It decode
          &gt;               >
          &quot              "
          &apos              '
-         &#xx;              xx in base 10
-         &#xxxx;            xxxx in base 16
+         &#XX;              XX in base 10
+         &#xXXXX;           XXXX in base 16
    
 It also decodes strings encoded with 'byte_to_string'
 
