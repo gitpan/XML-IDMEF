@@ -1,4 +1,4 @@
-# $Id: IDMEF.pm,v 1.14 2003/06/04 13:51:31 erwan Exp $
+# $Id: IDMEF.pm,v 1.15 2003/06/05 13:00:04 erwan Exp $
 
 package XML::IDMEF;
 
@@ -31,7 +31,7 @@ our @EXPORT = qw(xml_encode
 		 set_doctype_pubid
 		 );
 
-our $VERSION = '0.09';
+our $VERSION = '0.10';
 
 
 
@@ -1057,7 +1057,7 @@ sub find_node {
     $name = substr(shift(@tagpath), 1);
 
     if ($node->getTagName() eq $name) {
-	
+
 	return $node
 	    if ((scalar @tagpath) == 0);
 	
@@ -1072,6 +1072,50 @@ sub find_node {
     }
     
     return undef;
+}
+
+
+
+
+#----------------------------------------------------------------------------------------
+#
+# find_node_in_first_path($node, @tagpath)
+#
+# similar to find_node(), but look only through the first
+# occurence of the tagpath. the node may hence exists somewhere else.
+# return the last node in @tagpath if @tagpath exists in $dom, 
+# return undef otherwise
+#
+
+sub find_node_in_first_path {
+    my($node, @tagpath) = @_;
+    my($tag, $name, $n, $next);
+
+    $name = substr(shift @tagpath, 1);
+
+    return undef
+	if ($node->getTagName() ne $name);
+
+    foreach $tag (@tagpath) {
+	$name = substr($tag, 1);
+
+	# find a child with right name
+	$next = undef;
+	foreach $n ($node->getChildNodes()) {
+	    if ($n->getNodeType() == ELEMENT_NODE and $n->getTagName() eq $name) {
+		$next = $n;
+		last;
+	    }
+	}
+	
+	# next child not found
+	return undef
+	    if (!defined($next));
+	
+	$node = $next;
+    }
+
+    return $node;
 }
 
 
@@ -1220,11 +1264,7 @@ sub add {
     }
     else
     {
-	if (defined $value) {
 	    add_in_dom($dom, $root, $path, $value);
-	} else {
-	    add_in_dom($dom, $root, $path);
-	}
     }
 
     return 0;
@@ -1249,7 +1289,7 @@ sub add_in_dom {
 
     if ($type eq 'N') {
 	# we want to add a node
-	$node = find_node($root, @tagpath);
+	$node = find_node_in_first_path($root, @tagpath);
 
 	if (defined $node) {
 	    return duplicate_node_path($dom, $root, @tagpath);
@@ -1260,7 +1300,7 @@ sub add_in_dom {
     } elsif ($type eq 'A') {
 	# we want to add an attribute
 	$att = pop @tagpath;
-	$node = find_node($root, @tagpath);
+	$node = find_node_in_first_path($root, @tagpath);
 
 	if (!defined $node) {
 	    $node = create_node_path($dom, $root, @tagpath);
@@ -1273,11 +1313,12 @@ sub add_in_dom {
 
 	# add attribute
 	$node->setAttribute($att, $val);
+
 	return $node;
 
     } elsif ($type eq 'C') {
 	# we want to add a content
-	$node = find_node($root, @tagpath);
+	$node = find_node_in_first_path($root, @tagpath);
 
 	# if node does not exists, create it
 	if (!defined $node) {
@@ -1298,6 +1339,7 @@ sub add_in_dom {
 	# found a node that does not have any text element. create text.
 	$n = $dom->createTextNode($val);
 	$node->appendChild($n);
+
 	return $node;
     }
 

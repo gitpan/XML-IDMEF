@@ -9,7 +9,7 @@
 
 use Data::Dumper;
 use Test;
-BEGIN { plan tests => 13 };
+BEGIN { plan tests => 18 };
 use XML::IDMEF;
 
 $| = 1;
@@ -230,6 +230,92 @@ ok(1);
 
 
 ##
+## test set()
+##
+
+title "Test set()...";
+
+my $err;
+
+# change existing tag
+eval {
+    $idmef->set("AlertAdditionalData", "this is a new value changed with set()");
+};
+
+if ($@) {
+    print "error: set raised exception when it should not while setting tag.\n";
+    print "exception: $@\n";
+    ok(0);
+}
+
+# change existing attribute
+eval {
+    $idmef->set("AlertAdditionalDatameaning", "this is a new meaning changed with set()");
+};
+
+if ($@) {
+    print "error: set raised exception when it should not while setting attribute.\n";
+    print "exception: $@\n";
+    ok(0);
+}
+
+# changing non-existing tag
+eval {
+    $idmef->set("AlertTargetNodeAddressaddress", "blob");
+};
+
+check("set: did not raise error when setting non existent content node.\n")
+    if (!$@);
+
+# changing non content node
+eval {
+    $idmef->set("Alert", "blob");
+};
+
+check("set: did not raise error when setting node that does not accept content.\n")
+    if (!$@);
+
+ok(1);
+
+
+##
+## test get()
+##
+
+my $v;
+
+# get existing content
+title "Test get() on existing content...";
+eval {
+    $v =  $idmef->get("AlertAdditionalData");
+};
+check($@);
+
+check("get: returned wrong content when getting content.\n")
+    if ($v ne "this is a new value changed with set()");
+
+# get existing attribute
+title "Test get() on existing attribute...";
+eval {
+    $v =  $idmef->get("AlertAdditionalDatameaning");
+};
+check($@);
+
+check("get: returned wrong content when getting attribute.\n")
+    if ($v ne "this is a new meaning changed with set()");
+
+# get non existing content
+title "Test get() on non-existing content...";
+eval {
+    $v =  $idmef->get("AlertTargetNodeAddressaddress");
+};
+check($@);
+
+check("get: returned wrong content when getting non existent content.\n")
+    if (defined($v));
+
+
+##
 ## test encoding of special characters
 ##
 
@@ -247,5 +333,26 @@ check("add() did not handle special characters encoding according to XML specs."
 ok(1);
 
 
+##
+## test adding 2 similar nodes
+##
+
+title("Testing multiple add() calls bug...");
+
+$idmef = new XML::IDMEF;
+
+$idmef->add("AlertAnalyzerNodeAddresscategory", "ipv4-addr");
+$idmef->add("AlertAnalyzerNodeAddressaddress",  "1.1.1.1");
+
+$idmef->add("AlertAnalyzerNodeAddresscategory", "ipv4-addr");
+$idmef->add("AlertAnalyzerNodeAddressaddress",  "2.2.2.2");
+
+check("add() call bug still here!")
+    if ($idmef->out() !~ '<IDMEF-Message><Alert><Analyzer><Node><Address category="ipv4-addr"><address>2.2.2.2</address></Address><Address category="ipv4-addr"><address>1.1.1.1</address></Address></Node></Analyzer></Alert></IDMEF-Message>');
+
+ok(1);
+
 #$idmef = $idmef->in("idmef.example.1");
 #print Dumper($idmef->to_hash);
+
+

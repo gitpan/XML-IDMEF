@@ -47,3 +47,7 @@ Revision history for Perl extension XML::IDMEF.
         - remove some functions from the documentations. they are yet still in the
           module to maintain backward compatibility.
         - renamed a few methods. the old names can still be used.
+
+0.10 2003/06/10
+        - corrected bug in add() on multiple similar nodes
+
