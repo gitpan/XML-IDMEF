@@ -18,7 +18,7 @@ DESCRIPTION
 
   ******* WARNING ******* WARNING ******* WARNING ******* WARNING *******
 
-   This release (1.01) is a beta release and has not been thoroughly
+   This release (0.0X) is a beta release and has not been thoroughly
    tested. Please try it out if you can and report success/failure to
    the author.
 
@@ -51,7 +51,7 @@ BUILDING/INSTALLING
 
 STATUS
 
-  This version (1.01) is a beta release, and has not yet been thoroughly
+  This version is a beta release, and has not yet been thoroughly
   tested in production environment. It has been succesfully run on both
   linux and openbsd. 
   If you encounter any problems installing or running this release, please

@@ -12,3 +12,9 @@ Revision history for Perl extension XML::IDMEF.
 0.03  2002/09/24
         - corrected namespace bug crashing the tests
 
+0.04  2002/09/25
+        - refactored api to get uniformed call syntax
+          byte2string becomes byte_to_string, tohash ->to_hash
+          gettype -> get_type & in is now a class method
+        - more tests
+        - TODO: previous TODOs + add 'cmp' method

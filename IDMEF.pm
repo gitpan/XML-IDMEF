@@ -23,11 +23,11 @@ our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
 our @EXPORT = qw(xml_encode
 		 xml_decode
-		 byte2string
+		 byte_to_string
 		 extend_idmef	
 		 );
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 
 
@@ -54,12 +54,12 @@ our $VERSION = '0.03';
 ##        $idmef->create_ident();
 ##        $idmef->create_time();
 ##        $idmef->add("AlertAdditionalData", "myvalue", "mymeaning"); 
-##        $idmef->add("AlertAdditionalData", byte2string($bytes), "binary-data", "byte");
+##        $idmef->add("AlertAdditionalData", byte_to_string($bytes), "binary-data", "byte");
 ##        $idmef->add("AlertAnalyzermodel", "myids");
 ##        print $idmef->out();
 ##
 ##    An interface to load and parse an IDMEF message is also provided (with the
-##    'tohash' function), but is quite limited.
+##    'to_hash' function), but is quite limited.
 ##
 ##    This module contains a generic XML DTD parser and include a class based definition
 ##    of the IDMEF DTD. It can hence easily be upgraded or extended to support new XML
@@ -106,9 +106,9 @@ our $VERSION = '0.03';
 ##    in              # load new IDMEF message from string/file
 ##    out             # write IDMEF message to string/file
 ##
-##    tohash          # convert IDMEF message to hash for easy parsing
+##    to_hash         # convert IDMEF message to hash for easy parsing
 ##    add             # add a field to IDMEF message
-##    gettype         # return type of IDMEF message
+##    get_type        # return type of IDMEF message
 ##
 ##    create_ident    # initialyze the Alertident field witha unique id string
 ##    create_time     # initialize the CreateTime field with the current time
@@ -117,7 +117,7 @@ our $VERSION = '0.03';
 ##
 ##    xml_encode      # encode data (not binary) into an IDMEF compliant string
 ##    xml_decode      # and the other way round
-##    byte2string     # encode binary data into an IDMEF compliant string
+##    byte_to_string  # encode binary data into an IDMEF compliant string
 ##
 ##
 ##
@@ -155,7 +155,7 @@ use constant EMPTYIDMEF  => "<IDMEF-Message version=\"0.5\"></IDMEF-Message>";
 # which will need an upgrade. Beside, it gets easy to extend IDMEF by adding to the
 # DTD some home-defined root class, and extend IDMEF.pm. The extension module only
 # needs to contain a DTD hash extending the one of IDMEF, and call 'extend_idmef'.
-# All other functions ('in', 'out', 'add', 'tohash'...) are then inherited from IDMEF.
+# All other functions ('in', 'out', 'add', 'to_hash'...) are then inherited from IDMEF.
 #
 # This code is actually build in a very generic way and could be used with whatever 
 # other XML format.
@@ -227,8 +227,9 @@ my $IDMEF_DTD = {
     "Alert" => {
 	SUBCLASS    => [ "ToolAlert", "CorrelationAlert", "OverflowAlert" ],
 	ATTRIBUTES  => { "ident"  => [], "impact" => [], "action" => [] },
-	NODES       => [ "Analyzer", "CreateTime", "DetectTime", "AnalyzerTime", "Source", "Target",
-			 "Classification", "Assessment", "AdditionalData" ],
+	NODES       => [ "Analyzer", "CreateTime", "DetectTime", "AnalyzerTime",
+			 "Source", "Target", "Classification", "Assessment", 
+			 "AdditionalData" ],
 	MULTI       => [ "Source", "Target", "AdditionalData" ],
     },
 
@@ -589,7 +590,7 @@ sub load_xml_dtd {
 ##  for all the new IDMEF classes introduced by the extension, including
 ##  the one for the new root class.
 ##  "new_root_class" is the name of the root node of the IDMEF extension.
-##  From now on, the usual IDMEF calls ('in', 'add', 'tohash'...) can be
+##  From now on, the usual IDMEF calls ('in', 'add', 'to_hash'...) can be
 ##  used to create/parse extended messages as well. 
 ##
 
@@ -646,7 +647,7 @@ load_xml_dtd($IDMEF_DTD, "Heartbeat");
 
 ##----------------------------------------------------------------------------------------
 ##
-## <byte_string> = byte2string(<bytes>)
+## <byte_string> = byte_to_string(<bytes>)
 ##
 ## ARGS:
 ##   <bytes>    a binary string
@@ -656,7 +657,7 @@ load_xml_dtd($IDMEF_DTD, "Heartbeat");
 ##   refered to as type BYTE[] in the IDMEF rfc.
 ##
 
-sub byte2string {
+sub byte_to_string {
     return join '', map( { "&\#$_;" } unpack("C*", $_[0]) ); 
 }
 
@@ -681,7 +682,7 @@ sub byte2string {
 ##         >                 &gt;
 ##         "                 &quot;
 ##         '                 &apos;
-##   REM: if you want to convert data to the BYTE[] format, use 'byte2string' instead
+##   REM: if you want to convert data to the BYTE[] format, use 'byte_to_string' instead
 ##
 
 sub xml_encode {
@@ -721,7 +722,7 @@ sub xml_encode {
 ##   <string>     the corresponding decoded string
 ##
 ## DESC:
-##   You don't need this function with 'tohash' (which already calls it).
+##   You don't need this function with 'to_hash' (which already calls it).
 ##   It decodes <xmlstring> into a string, ie replace the following
 ##   characters:         with:
 ##         &amp;              &
@@ -731,7 +732,7 @@ sub xml_encode {
 ##         &apos              '
 ##         &#xx;              xx in base 10
 ##         &#xxxx;            xxxx in base 16
-##   It also decodes strings encoded with 'byte2string'
+##   It also decodes strings encoded with 'byte_to_string'
 ##
 
 sub xml_decode {
@@ -785,9 +786,10 @@ sub new {
 
 ##----------------------------------------------------------------------------------------
 ##
-## in(<string>)
+## in(<idmef>, <string>)
 ##
 ## ARGS:
+##   <idmef>   idmef object
 ##   <string>  can be either a path to an IDMEF file to load, or an IDMEF string.
 ##             if it is an empty string, a new empty IDMEF message is created.
 ## RETURN:
@@ -798,16 +800,17 @@ sub new {
 ##   the input can either be a string, a file or an empty string.
 ##
 ## EXAMPLES:
-##   my $idmef = XML::IDMEF::in("/home/user/idmef.xml");
-##   $idmef = XML::IDMEF::in("<IDMEF-Message version=\"0.5\"></IDMEF-Message>");
+##   my $idmef = (new XML::IDMEF)->in("/home/user/idmef.xml");
+##   $idmef = $idmef->in("<IDMEF-Message version=\"0.5\"></IDMEF-Message>");
 ##
 
 sub in {
     #remove keeproot if there is a higher tag than Alert (<idmef...>)
-    my($idmef, $arg);
+    my($idmef, $arg) = @_;
+
+    $arg = "" if (!defined($arg));
 
     # if got empty string, create a new empty idmef, otherwise load/parse it
-    $arg = shift;
     $arg = EMPTYIDMEF if ($arg eq "");
 
     $idmef = XMLin($arg, keyattr=>[], forcearray=>1, keeproot=>0, contentkey=>CONTENTKEY);
@@ -858,7 +861,7 @@ sub out {
 
 ##----------------------------------------------------------------------------------------
 ##
-## gettype(<hash>)
+## get_type(<hash>)
 ##
 ## ARGS:
 ##   <hash>  hash containing an IDMEF message in XML::Simple representation
@@ -870,10 +873,10 @@ sub out {
 ## EXAMPLES:
 ##   $idmef = new XML::IDMEF();
 ##   $idmef->add("Alertimpact", "7");
-##   $type = $idmef->gettype();   # $type now contains the string "Alert"   
+##   $type = $idmef->get_type();   # $type now contains the string "Alert"   
 ##
 
-sub gettype {
+sub get_type {
     my $idmef = shift;
     
     foreach my $k (keys %{$idmef}) {
@@ -886,7 +889,7 @@ sub gettype {
 
 ##----------------------------------------------------------------------------------------
 ##
-## tohash(<hash>)
+## to_hash(<hash>)
 ##
 ## ARGS:
 ##   <hash>  hash containing an IDMEF message in XML::Simple representation
@@ -924,7 +927,7 @@ sub gettype {
 ##
 ##
 
-sub tohash {
+sub to_hash {
     my $idmef = shift;
     my $result = {};
     my $path = [];
@@ -934,9 +937,9 @@ sub tohash {
 }
 
 
-# recursive functions called by tohash
+# recursive functions called by to_hash
 # goes through the XML::Simple hash tree representing the IDMEF message
-# and build a hash of keys as returned by tohash
+# and build a hash of keys as returned by to_hash
 
 sub simplehashtohash {
     my($hash, $path, $result) = @_;
@@ -1185,7 +1188,7 @@ sub check_allowed {
 ## DESC:
 ##   Each IDMEF field of a given IDMEF message can be created through a corresponding add()
 ##   call. These interfaces are designed for easily building a new IDMEF message while
-##   parsing a log file. The 'tagpath' is the same as returned by the 'tohash' call.
+##   parsing a log file. The 'tagpath' is the same as returned by the 'to_hash' call.
 ##
 ## RESTRICTIONS:
 ##   You cannot change an attribute value with add(). An attempt to run add() on an attribute 
@@ -1330,7 +1333,7 @@ sub create_ident {
     my($id, $idmef, $name, $netaddr);
     $idmef = shift;
 
-    $name = $idmef->gettype();
+    $name = $idmef->get_type();
     $name = "Alert" if (!defined $name);
 
     # code cut n paste from Sys::UniqueID
@@ -1366,7 +1369,7 @@ sub create_ident {
 sub create_time {
     my $idmef = shift;
 
-    my $name = $idmef->gettype();
+    my $name = $idmef->get_type();
     $name = "Alert" if (!defined $name);
 
     # add time stamp
@@ -1474,11 +1477,11 @@ IDMEF.pm is an interface for simply creating and parsing IDMEF messages. IDMEF i
 
 IDMEF.pm is compliant with IDMEF v0.5, and hence provides calls for building Alert, ToolAlert, CorrelationAlert, OverflowAlert and Heartbeat IDMEF messages.
     
-This interface has been designed for simplifying the task of translating a key-value based format to its idmef representation, which is the most common situation when writing a log export module for a given software. A typical session involves the creation of a new IDMEF message, the initialisation of some of its fields and its conversion into an IDMEF string (see example in SYNOPSIS).
+This interface has been designed for simplifying the task of translating a key-value based format to its idmef representation, which is the most common situation when writing a log export module for a given software. A typical session involves the creation of a new IDMEF message, the initialisation of some of its fields and its conversion into an IDMEF string (see example in QUICK START).
 
-An interface to load and parse an IDMEF message is also provided (with the 'tohash' function).
+An interface to load and parse an IDMEF message is also provided (with the 'to_hash' function).
 
-This module contains a generic XML DTD parser and include a class based definition of the IDMEF DTD. It can hence easily be upgraded or extended to support new XML node. For information on how to extend IDMEF with IDMEF.pm, read the documentation in the source code.
+This module contains a generic XML DTD parser and includes a class based definition of the IDMEF DTD. It can hence easily be upgraded or extended to support new XML nodes. For information on how to extend IDMEF with IDMEF.pm, read the documentation in the source code.
     
 This code is distributed under the BSD license, and with the support of Proact Defcom AB, Stockholm, Sweden.
 
@@ -1486,7 +1489,7 @@ This code is distributed under the BSD license, and with the support of Proact D
 
     xml_encode
     xml_decode
-    byte2string
+    byte_to_string
     extend_idmef	
 
 =head1 AUTHOR
@@ -1503,7 +1506,9 @@ XML::Simple, XML::Parser, XML::Expat, libexpat
 
 =head1 SYNOPSIS
 
-In the following, function calls and function parameters are passed in a perl object-oriented fashion. Hence, some functions are said to not take any argument, while they in fact take an IDMEF object as first argument. Refer to the examples in case of confusion.
+In the following, function calls and function parameters are passed in a perl object-oriented fashion. Hence, some functions (object methods) are said to not take any argument, while they in fact take an IDMEF object as first argument. Refer to the examples in case of confusion. The function listed at the end (C<xml_encode>, C<xml_decode>, C<byte_to_string> are on the other hand class methods, and should not be called on an IDMEF object.
+
+=head1 OBJECT METHODS
 
 =over 4
 
@@ -1548,8 +1553,8 @@ C<in> creates a new IDMEF message from either a string C<STRING> or a file locat
 
 =item B<EXAMPLES>
 
- my $idmef = XML::IDMEF::in("idmef.file");
- my $idmef = XML::IDMEF::in();
+ my $idmef = (new XML::IDMEF)->in("idmef.file");
+ my $idmef = $idmef->in();
 
 =back
 
@@ -1589,7 +1594,7 @@ C<out> returns the IDMEF message as a string.
 
 =item B<DESC>
    
-C<create_ident> generates a unique IDMEF ident tag and inserts it into this IDMEF message. The tag is generated base on the local time, a random number, the process pid and an intern counter. If the IDMEF message does not yet have a type, it will become 'Alert' by default.
+C<create_ident> generates a unique IDMEF ident tag and inserts it into this IDMEF message. The tag is generated base on the local time, a random number, the process pid and an internal counter. If the IDMEF message does not yet have a type, it will become 'Alert' by default.
 
 =item B<EXAMPLES>
 
@@ -1621,7 +1626,7 @@ C<create_time> sets the IDMEF CreateTime node to the current time. It sets both 
 
 
 
-=item $idmef->B<gettype>()
+=item $idmef->B<get_type>()
 
 =over 4
 
@@ -1633,11 +1638,11 @@ the type of this IDMEF message, as a string.
 
 =item B<DESC>
    
-C<gettype> returns the type of this IDMEF message as a string. An 'Alert' IDMEF message would for example return "Alert".
+C<get_type> returns the type of this IDMEF message as a string. An 'Alert' IDMEF message would for example return "Alert".
 
 =item B<EXAMPLES>
    
- $string_type = $idmef->gettype();
+ $string_type = $idmef->get_type();
 
 =back 
 
@@ -1662,7 +1667,7 @@ I<$value>: the value (content of a tag, or value of an attribute) of the last ta
 
 =item B<DESC>
 
-Each IDMEF content/value of a given IDMEF message node can be created through an appropriate add() call. A 'tagpath' is a string contained by concatenating the names of the XML nodes from the top 'Alert' node down to the attribute or content whose value we want to set. Hence, in the example given in introduction, the tagpath for setting the value of the Alert Analyzer model attribute is 'AlertAnalyzermodel'.
+Each IDMEF content/value of a given IDMEF message node can be created through an appropriate add() call. A 'tagpath' is a string obtained by concatenating the names of the XML nodes from the top 'Alert' node down to the attribute or content whose value we want to set. Hence, in the example given in introduction, the tagpath for setting the value of the Alert Analyzer model attribute is 'AlertAnalyzermodel'.
 
 The C<add> call was designed for easily building a new IDMEF message while parsing a log file, or any data based on a key-value format.
 
@@ -1672,15 +1677,15 @@ C<add> cannot be used to change the value of an already existing content or attr
 
 =item B<SPECIAL CASE: AdditionalData>
 
-AdditionalData is a special tag requiring at least 2 add() calls to build a valid node. In case of multiple AdditionalData delaration, take care of building AdditionalData nodes one at a time, and always begin by adding the "AddtitionalData" field (ie the tag content). Otherwise, the idmef key insertion engine will get lost, and you will get scrap.
+AdditionalData is a special tag requiring at least 2 add() calls to build a valid node. In case of multiple AdditionalData delarations, take care of building AdditionalData nodes one at a time, and always begin by adding the "AddtitionalData" field (ie the tag content). Otherwise, the idmef key insertion engine will get lost, and you will get scrap.
 
 As a response to this issue, the 'add("AlertAdditionalData", "value")' call accepts an extended syntax compared with other calls:
 
    add("AlertAdditionalData", <value>);   
-      => add the content <value> to Alert/AdditionalData
+      => add the content <value> to Alert AdditionalData
 
    add("AlertAdditionalData", <value>, <meaning>); 
-      => same as:  (type string is assumed by default)
+      => same as:  (type "string" is assumed by default)
          add("AlertAdditionalData", <value>); 
          add("AlertAdditionalDatameaning", <meaning>); 
          add("AlertAdditionalDatatype", "string");
@@ -1691,7 +1696,7 @@ As a response to this issue, the 'add("AlertAdditionalData", "value")' call acce
          add("AlertAdditionalDatameaning", <meaning>); 
          add("AlertAdditionalDatatype", <type>);
 
-The use of C<add("AlertAdditionalData", <arg1>, <arg2>, <arg3>);> is prefered to the simple C<add> call, since it creates the whole AdditionalData node at once. In the case of multiple arguments C<add("AlertAdditionalData"...)>, the returned value is 1 if the type key was inserted, 0 otherwise.
+The use of add("AlertAdditionalData", <arg1>, <arg2>, <arg3>) is prefered to the simple C<add> call, since it creates the whole AdditionalData node at once. In the case of multiple arguments C<add("AlertAdditionalData"...)>, the returned value is 1 if the type key was inserted, 0 otherwise.
 
 =item B<EXAMPLES>
 
@@ -1731,7 +1736,7 @@ The use of C<add("AlertAdditionalData", <arg1>, <arg2>, <arg3>);> is prefered to
 
 
 
-=item $idmef->B<tohash>()
+=item $idmef->B<to_hash>()
 
 =over 4
 
@@ -1743,7 +1748,7 @@ the IDMEF message flattened inside a hash.
 
 =item B<DESC>
    
-C<tohash> returns a hash enumerating all the contents and attributes of this IDMEF message. Each key is a concatenated sequence of XML tags (a 'tagpath', see C<add()>) leading to the content/attribute, and the corresponding value is an array containing the content/attribute itself. In case of multiple occurences of one 'tagpath', the corresponding values are listed as elements of the array (See the example). All IDMEF contents and values are converted from IDMEF format (STRING or BYTE) back to the original ascii string.
+C<to_hash> returns a hash enumerating all the contents and attributes of this IDMEF message. Each key is a concatenated sequence of XML tags (a 'tagpath', see C<add()>) leading to the content/attribute, and the corresponding value is an array containing the content/attribute itself. In case of multiple occurences of one 'tagpath', the corresponding values are listed as elements of the array (See the example). All IDMEF contents and values are converted from IDMEF format (STRING or BYTE) back to the original ascii string.
 
 =item B<EXAMPLES>
 
@@ -1774,6 +1779,11 @@ C<tohash> returns a hash enumerating all the contents and attributes of this IDM
 
 
 
+=head1 CLASS METHODS
+
+
+
+
 =item B<xml_encode>($string)
 
 =over 4
@@ -1796,7 +1806,7 @@ You do not need this function if you are using add() calls (which already calls 
          "                 &quot;
          '                 &apos;
 
-REM: if you want to convert data to the BYTE[] format, use 'byte2string' instead
+REM: if you want to convert data to the BYTE[] format, use 'byte_to_string' instead
 
 =back
 
@@ -1817,7 +1827,7 @@ the corresponding decoded string.
 
 =item B<DESC>
    
-You do not need this function with 'tohash' (which already calls it). It decodes <xmlstring> into a string, ie replace the following characters:         with:
+You do not need this function with 'to_hash' (which already calls it). It decodes <xmlstring> into a string, ie replaces the following characters:         with:
          &amp;              &
          &lt;               <
          &gt;               >
@@ -1826,14 +1836,14 @@ You do not need this function with 'tohash' (which already calls it). It decodes
          &#xx;              xx in base 10
          &#xxxx;            xxxx in base 16
    
-It also decodes strings encoded with 'byte2string'
+It also decodes strings encoded with 'byte_to_string'
 
 =back
 
 
 
 
-=item B<byte_2_string>($bytes)
+=item B<byte_to_string>($bytes)
 
 =over 4
 
@@ -1847,7 +1857,7 @@ The string obtained by converting <bytes> into its IDMEF representation, refered
 
 =item B<DESC>
    
-convert a binary string into its BYTE[] representation, according to the IDMEF rfc.
+converts a binary string into its BYTE[] representation, according to the IDMEF rfc.
 
 =back
 

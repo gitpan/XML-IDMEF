@@ -6,17 +6,36 @@
 # change 'tests => 1' to 'tests => last_test_to_print';
 
 use Test;
-BEGIN { plan tests => 1 };
+BEGIN { plan tests => 3 };
 use XML::IDMEF;
 
 ok(1); # If we made it this far, we're ok.
 
 #########################
 
+
+sub check {
+    $error = shift;
+    if ($error) {
+	print "error: $error\n";
+	ok(0);
+    } else {
+	ok(1);
+    }
+}
+
+
+
+my($idmef, $str_idmef, $idmef2, $type);
+
+##
+## test 1: create simple IDMEF message object
+##
+
 eval {
-    print "Trying to build a simple IDMEF message:\n";
+    print "Trying to build a simple IDMEF message...\n";
     
-    my $idmef = new XML::IDMEF();  
+    $idmef = new XML::IDMEF();  
     
     $idmef->create_ident();
     $idmef->create_time();
@@ -26,13 +45,37 @@ eval {
     $idmef->add("AlertAdditionalData", "value2", "data2");
     $idmef->add("AlertAnalyzermodel", "myids");
     
-    print $idmef->out();
+    $str_idmef =  $idmef->out();
 };
 
-if ($@) {
-    print "error: $@";
-    ok(0);
-} else {
+check($@);
+
+
+##
+## test 2: read in the IDMEF string
+##
+
+eval {
+    print "Parsing an IDMEF message from a string...\n";
+    $idmef2 = (new XML::IDMEF)->in($str_idmef);    
+};
+
+check($@);
+
+
+##
+## test 3: getting type of inslurped idmef
+##
+
+print "Checking type of parsed IDMEF...\n";
+$type = $idmef2->get_type();
+if ($type eq "Alert") {
     ok(1);
+} else {
+    print "error: get_type returned wrong value ($type)\n";
+    ok(0);
 }
+
+
+
 
