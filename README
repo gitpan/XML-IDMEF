@@ -2,9 +2,9 @@ DESCRIPTION
 
   XML::IDMEF - A perl module for easily creating/parsing IDMEF messages
 
-  IDMEF module is a wrapper around XML::Simple, providing an interface
-  designed to simplify the parsing and creation of IDMEF messages. IDMEF
-  is an XML based standard for representing Intrusion Detection alert
+  IDMEF module is a wrapper around XML::DOM and XML::Parser, providing an 
+  interface designed to simplify the parsing and creation of IDMEF messages. 
+  IDMEF is an XML based standard for representing Intrusion Detection alert
   messages (http://www.silicondefense.com/idwg/).
 
   The interface provided by XML::IDMEF is designed to make it very simple
@@ -15,7 +15,7 @@ DESCRIPTION
 
   ******* WARNING ******* WARNING ******* WARNING ******* WARNING *******
 
-   This release (>0.09) introduces major internal changes compared
+   This release (>0.11) introduces major internal changes compared
    with the previous versions. Furthermore, it implements the most
    *final* version of IDMEF. 
 
@@ -30,8 +30,6 @@ DESCRIPTION
    Use in production systems is at your own risks.
 
   ******* WARNING ******* WARNING ******* WARNING ******* WARNING *******
-
-
 
 
 PREREQUISITES
@@ -68,10 +66,9 @@ STATUS
 
 NEW IN THIS RELEASE
 
-  The API is now compliant with IDMEF 1.0, and out() respects the order
-  of IDMEF tags, as specified in the IDMEF DTD.
-  See 'Changes' for a detailed history.
-
+  The IDMEF DTD is compliant with the IDMEF rfc draft 12. 
+  Improved test sequences.
+  See 'Changes' for a detailed historic.
 
 BUGS
   

@@ -51,3 +51,7 @@ Revision history for Perl extension XML::IDMEF.
 0.10 2003/06/10
         - corrected bug in add() on multiple similar nodes
 
+0.11 2004/11/29
+        - upgraded the IDMEF DTD to version 1.2 of the IDMEF draft, thanks to some 
+          patches sent by David Maciejak.
+        - rewrote the test sequence properly

@@ -1,4 +1,4 @@
-# $Id: IDMEF.pm,v 1.15 2003/06/05 13:00:04 erwan Exp $
+# $Id: IDMEF.pm,v 1.16 2004/11/29 13:53:35 erwan Exp $
 
 package XML::IDMEF;
 
@@ -31,7 +31,7 @@ our @EXPORT = qw(xml_encode
 		 set_doctype_pubid
 		 );
 
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 
 
 
@@ -260,14 +260,14 @@ my $IDMEF_DTD = {
     },
 
     "Alert" => {
-	ATTRIBUTES  => { "ident"  => [] },
+	ATTRIBUTES  => { "messageid"  => [] },
 	CHILDREN    => [ "1Analyzer", "1CreateTime", "?DetectTime", "?AnalyzerTime",
-			 "*Source", "*Target", "+Classification", "?Assessment", 
+			 "*Source", "*Target", "1Classification", "?Assessment", 
 			 "#ToolAlert", "#CorrelationAlert", "#OverflowAlert", "*AdditionalData" ],
     },
 
     "Heartbeat" => {
-	ATTRIBUTES  => { "ident" => [] },
+	ATTRIBUTES  => { "messageid" => [] },
 	CHILDREN    => [ "1Analyzer", "1CreateTime", "?AnalyzerTime", "*AdditionalData" ],
     },
 
@@ -300,11 +300,12 @@ my $IDMEF_DTD = {
     #
 
     "Analyzer" => {
-        ATTRIBUTES  => { "analyzerid"   => [], "manufacturer" => [], "model"        => [],
+        ATTRIBUTES  => { "analyzerid"   => [], "name"   => [], "manufacturer" => [], "model"        => [],
 			 "version"      => [], "class"        => [], "ostype"       => [],
 			 "osversion"    => [], 
 		     },
 	CHILDREN    => [ "?Node", "?Process" ],
+# ALERT! ignore ?Analyzer node: the DTD parser does not support recursive nodes
     },
     
     "Source" => {
@@ -336,20 +337,30 @@ my $IDMEF_DTD = {
     },
 
     "Classification" => {
-	ATTRIBUTES  => { "origin" => ["unknown", "bugtraqid", "cve", "vendor-specific"] },
-	CHILDREN    => [ "1name", "1url" ],
+	ATTRIBUTES  => { "ident" => [], "text" => [] },
+	CHILDREN    => [ "*Reference" ],
+    },
+
+    "Reference" => {
+	ATTRIBUTES  => { "origin" => ["unknown", "vendor-specific", "user-specific", "bugtraqid", "cve", "osvdb" ], "meaning" => [] },
+	CHILDREN    => [ "1name", "1url" ],    
     },
     
     "File" => {
-	ATTRIBUTES  => { "ident"    => [], "category" => ["current","original"], "fstype"   => [] },
+	ATTRIBUTES  => { "ident"    => [], "category" => ["current","original"], "fstype" => ["ufs", "efs", "nfs", "afs" ,"ntfs" ,"fat16", "fat32", "pcfs", "joliet", "iso9660" ] },
 	CHILDREN    => [ "1name", "1path", "?create-time", "?modify-time", "?access-time", "?data-size",
-			 "?disk-size", "*FileAccess", "*Linkage", "?Inode" ],
+			 "?disk-size", "*FileAccess", "*Linkage", "?Inode", "*Checksum" ],
     },
 
+    "Checksum" => {
+        ATTRIBUTES  => { "algorithm" => [ "MD4", "MD5", "SHA1", "SHA2-256", "SHA2-384", "SHA2-512", "CRC-32", "Haval", "Tiger", "Gost" ] },
+        CHILDREN    => [ "1value", "?key" ],
+    },
+    
     "FileAccess" => {
         CHILDREN    => [ "1UserId", "+permission" ],
     },
-
+    
     "FileList" => {
 	CHILDREN    => [ "+File" ],
     },
@@ -380,7 +391,7 @@ my $IDMEF_DTD = {
     },
     
     "Service" => {
-	ATTRIBUTES  => { "ident" => [] },
+	ATTRIBUTES  => { "ident" => [], "ip_version" => [], "iana_protocol_number" => [], "iana_protocol_name" => [] },
 	CHILDREN    => [ "?name", "?port", "?portlist", "?protocol", "?SNMPService", "?WebService" ],
     },
 
@@ -436,7 +447,7 @@ my $IDMEF_DTD = {
     },
 
     "Impact" => {
-	ATTRIBUTES  => { "severity"   => ["low", "medium", "high"],
+	ATTRIBUTES  => { "severity"   => ["info", "low", "medium", "high"],
 			 "completion" => ["failed", "succeeded"],
 			 "type"       => ["admin", "dos", "file", "recon", "user", "other"],
 		     },
@@ -484,6 +495,8 @@ my $IDMEF_DTD = {
     "protocol"        => { CONTENT => PCDATA },
     "size"            => { CONTENT => PCDATA },
     "url"             => { CONTENT => PCDATA },
+    "value"            => { CONTENT => PCDATA },
+    "key"             => { CONTENT => PCDATA },
 
     #
     # Not defined in IDMEF DTD
@@ -1721,7 +1734,7 @@ sub create_ident {
     unless(++$ID_COUNT < 0x10000) { sleep 1; $ID_COUNT= 0; }
     $id =  sprintf '%012X%s%08X%04X', time, $netaddr, $$, $ID_COUNT;
 
-    $idmef->add($name."ident", $id);        
+    $idmef->add($name."messageid", $id);        
 }
 
 
@@ -2103,6 +2116,8 @@ This code is distributed under the BSD license.
 =head1 AUTHOR
 
 Erwan Lemonnier - erwan@cpan.org
+
+Contributor: David Maciejak
 
 =head1 LICENSE
 
