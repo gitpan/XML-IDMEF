@@ -1,4 +1,4 @@
-# $Id: Simple.pm,v 1.1.1.1.2.2 2002/02/09 22:13:34 grantm Exp $
+# $Id: IDMEF.pm,v 1.2 2002/09/25 15:17:45 erwan Exp $
 
 package XML::IDMEF;
 
@@ -27,7 +27,7 @@ our @EXPORT = qw(xml_encode
 		 extend_idmef	
 		 );
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 
 

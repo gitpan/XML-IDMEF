@@ -18,3 +18,7 @@ Revision history for Perl extension XML::IDMEF.
           gettype -> get_type & in is now a class method
         - more tests
         - TODO: previous TODOs + add 'cmp' method
+
+0.05  2002/09/25
+        - changed Makefile.PL to contain dependencies
+
