@@ -16,7 +16,7 @@ ok(1); # If we made it this far, we're ok.
 eval {
     print "Trying to build a simple IDMEF message:\n";
     
-    my $idmef = new IDMEF();  
+    my $idmef = new XML::IDMEF();  
     
     $idmef->create_ident();
     $idmef->create_time();

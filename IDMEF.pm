@@ -27,7 +27,7 @@ our @EXPORT = qw(xml_encode
 		 extend_idmef	
 		 );
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 
 
@@ -48,9 +48,9 @@ our $VERSION = '0.02';
 ##    the creation of a new IDMEF message, the initialisation of some of it's fields
 ##    and its conversion into an IDMEF string, as illustrated below:
 ##
-##        use IDMEF;
+##        use XML::IDMEF;
 ##
-##        my $idmef = new IDMEF();
+##        my $idmef = new XML::IDMEF();
 ##        $idmef->create_ident();
 ##        $idmef->create_time();
 ##        $idmef->add("AlertAdditionalData", "myvalue", "mymeaning"); 
@@ -774,7 +774,7 @@ sub xml_decode {
 ##   wrapper to a in("") call.
 ##
 ## EXAMPLES:
-##   $idmef = new IDMEF();
+##   $idmef = new XML::IDMEF();
 ##
 
 sub new {
@@ -798,8 +798,8 @@ sub new {
 ##   the input can either be a string, a file or an empty string.
 ##
 ## EXAMPLES:
-##   my $idmef = IDMEF::in("/home/user/idmef.xml");
-##   $idmef = IDMEF::in("<IDMEF-Message version=\"0.5\"></IDMEF-Message>");
+##   my $idmef = XML::IDMEF::in("/home/user/idmef.xml");
+##   $idmef = XML::IDMEF::in("<IDMEF-Message version=\"0.5\"></IDMEF-Message>");
 ##
 
 sub in {
@@ -812,7 +812,7 @@ sub in {
 
     $idmef = XMLin($arg, keyattr=>[], forcearray=>1, keeproot=>0, contentkey=>CONTENTKEY);
     
-    bless($idmef, "IDMEF");
+    bless($idmef, "XML::IDMEF");
     return $idmef;
 }
 
@@ -868,7 +868,7 @@ sub out {
 ##   or undef if this message does not have a type yet.
 ##
 ## EXAMPLES:
-##   $idmef = new IDMEF();
+##   $idmef = new XML::IDMEF();
 ##   $idmef->add("Alertimpact", "7");
 ##   $type = $idmef->gettype();   # $type now contains the string "Alert"   
 ##
@@ -1225,7 +1225,7 @@ sub check_allowed {
 ##
 ## EXAMPLES:
 ##
-##   my $idmef = new IDMEF();
+##   my $idmef = new XML::IDMEF();
 ##
 ##   $idmef->add("Alertimpact", "<value>");     
 ##
@@ -1438,7 +1438,7 @@ The previous IDMEF message can be built with the following code snipset:
 
     use XML::IDMEF;   
 
-    my $idmef = new IDMEF();  
+    my $idmef = new XML::IDMEF();  
 
     $idmef->add("AlertTargetNodename", "mynode");
     $idmef->add("AlertAdditionalData", "value1", "data1"); 
@@ -1523,7 +1523,7 @@ C<new> creates and returns a new empty IDMEF message. Use C<add()>, C<create_ide
 
 =item B<EXAMPLES>
 
- my $idmef = new IDMEF;
+ my $idmef = new XML::IDMEF;
 
 =back  
 
@@ -1548,8 +1548,8 @@ C<in> creates a new IDMEF message from either a string C<STRING> or a file locat
 
 =item B<EXAMPLES>
 
- my $idmef = IDMEF_in("idmef.file");
- my $idmef = IDMEF_in();
+ my $idmef = XML::IDMEF::in("idmef.file");
+ my $idmef = XML::IDMEF::in();
 
 =back
 
@@ -1695,7 +1695,7 @@ The use of C<add("AlertAdditionalData", <arg1>, <arg2>, <arg3>);> is prefered to
 
 =item B<EXAMPLES>
 
- my $idmef = new IDMEF();
+ my $idmef = new XML::IDMEF();
 
  $idmef->add("Alertimpact", "<value>");     
 
