@@ -24,3 +24,9 @@ Revision history for Perl extension XML::IDMEF.
 
 0.06  2002/10/15
 	- corected small bug in dtd: source interfaces -> interface
+
+0.07  2002/11/19
+        - upgraded the IDMEF DTD to version 0.7 of the IDMEF draft
+        - corrected some typos, improved documentation
+        - modified create_time to accept an optional epoch time in argument
+        - introduced 'contains' function, to test for tagpath existence

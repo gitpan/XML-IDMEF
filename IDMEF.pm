@@ -1,4 +1,4 @@
-# $Id: IDMEF.pm,v 1.2 2002/09/25 15:17:45 erwan Exp $
+# $Id: IDMEF.pm,v 1.9 2002/11/19 09:26:13 erwan Exp $
 
 package XML::IDMEF;
 
@@ -10,7 +10,7 @@ use warnings;
 # various includes
 use Carp;
 use XML::Simple;
-#use Data::Dumper;
+use Data::Dumper;
 
 # export, version, inheritance
 require Exporter;
@@ -27,7 +27,7 @@ our @EXPORT = qw(xml_encode
 		 extend_idmef	
 		 );
 
-our $VERSION = '0.06';
+our $VERSION = '0.07';
 
 
 
@@ -40,7 +40,7 @@ our $VERSION = '0.06';
 ## DESC:
 ##
 ##    IDMEF.pm is an interface for simply creating and parsing IDMEF messages.
-##    It is compliant with IDMEF v0.5, and hence provides calls for building Alert,
+##    It is compliant with IDMEF v0.7, and hence provides calls for building Alert,
 ##    ToolAlert, CorrelationAlert, OverflowAlert and Heartbeat IDMEF messages.
 ##
 ##    This interface has been designed for simplifying the task of translating a
@@ -211,49 +211,61 @@ use constant CONTENTKEY => "PerlIDMEFContent";
 # IDMEF_DTD:
 # ----------
 #
-# A hash encoding the whole IDMEF DTD as of version 0.5
+# A hash encoding the whole IDMEF DTD, as defined in the draft rfc.
 # It contains definitions for all the xml classes necessary to build
 # the root IDMEF messages of type Alert and Heartbeat, as well as their
 # subclasses.
 
+# version of the IDMEF draft used for this DTD
+my $IDMEF_VERSION = "0.7";
+
 my $IDMEF_DTD = {
 
+    #idmef0.7    
     "Heartbeat" => {
 	ATTRIBUTES  => { "ident" => [] },
-	NODES       => [ "Analyzer", "CreateTime", "AnalyzerTime", "AdditionalData" ],
+	NODES       => [ "Analyzer", "CreateTime", "AnalyzerTime",
+			 "AdditionalData" ],
 	MULTI       => [ "AdditionalData" ],
     },
 
+    #idmef0.7    
     "Alert" => {
 	SUBCLASS    => [ "ToolAlert", "CorrelationAlert", "OverflowAlert" ],
-	ATTRIBUTES  => { "ident"  => [], "impact" => [], "action" => [] },
+	ATTRIBUTES  => { "ident"  => [] },           #, "impact" => [], "action" => [] },
 	NODES       => [ "Analyzer", "CreateTime", "DetectTime", "AnalyzerTime",
 			 "Source", "Target", "Classification", "Assessment", 
 			 "AdditionalData" ],
-	MULTI       => [ "Source", "Target", "AdditionalData" ],
+	MULTI       => [ "Source", "Target", "Classification",
+			 "AdditionalData" ],
     },
 
+    #idmef0.7    
     "ToolAlert"  => { 
 	NODES       => [ "alertident" ],
 	TAGS        => [ "name", "command" ], 
 	MULTI       => [ "alertident" ],
     },
 
+    #idmef0.7    
     "CorrelationAlert" => {
 	NODES       => [ "alertident" ],
 	TAGS        => [ "name" ],
 	MULTI       => [ "alertident" ],
     },
 
+    #idmef0.7    
     "OverflowAlert" => {
 	TAGS        => [ "program", "size", "buffer" ],
     },
 
+    #idmef0.7    
     "alertident" => {
 	ATTRIBUTES  => { "analyzerid" => [] },
 	TAGS        => [ CONTENTKEY ],
     },
 
+    #idmef0.7
     "Analyzer" => {
         ATTRIBUTES  => { "analyzerid"   => [], "manufacturer" => [], "model"        => [],
 			 "version"      => [], "class"        => [], "ostype"       => [],
@@ -262,27 +274,32 @@ my $IDMEF_DTD = {
 	NODES       => [ "Node", "Process" ],
     },
 
-
+    #idmef0.7
     "Classification" => {
 	ATTRIBUTES  => { "origin" => ["unknown", "bugtraqid", "cve", "vendor-specific"] },
 	TAGS        => [ "name", "url" ],
     },
     
+    #idmef0.7
     "Source" => {
-	ATTRIBUTES  => { "ident"      => [], "interface" => [], "spoofed"    => ["unknown", "yes", "no"] },
+	ATTRIBUTES  => { "ident"      => [], "interface" => [],
+			 "spoofed"    => ["unknown", "yes", "no"] },
 	NODES       => [ "Node", "User", "Process", "Service" ],
     },
     
+    #idmef0.7
     "Target" => {
-	ATTRIBUTES  => { "ident" => [], "decoy" => ["unknown","yes","no"], "interfaces" => [] },
+	ATTRIBUTES  => { "ident" => [], "decoy" => ["unknown","yes","no"], "interface" => [] },
 	NODES       => [ "Node", "User", "Process", "Service", "FileList" ],
     },
     
+    #idmef0.7
     "Assessment" => {
-	NODES       => [ "Impact", "Action", "Confidence" ],
+	NODES       => [ "Impact", "Confidence", "Action" ],
 	MULTI       => [ "Action" ],
     },
-    
+
+    #idmef0.7    
     "Impact" => {
 	ATTRIBUTES  => { "severity"   => ["low", "medium", "high"],
 			 "completion" => ["failed", "succeeded"],
@@ -291,42 +308,49 @@ my $IDMEF_DTD = {
 	TAGS        => [ CONTENTKEY ],
     },
     
+    #idmef0.7
     "Action" => {
 	ATTRIBUTES  => { "category" => ["block-installed", "notification-sent", "taken-offline"] },
 	TAGS        => [ CONTENTKEY ],
     },
     
+    #idmef0.7
     "Confidence" => {
 	ATTRIBUTES  => { "rating" => ["low", "medium", "high", "numeric"] },
 	TAGS        => [ CONTENTKEY ],
     }, 
     
+    #idmef0.7
     "AdditionalData" => {
-	ATTRIBUTES  => { "type" => ["string", "boolean", "byte", "character", "date-time", "integer",
-				    "ntpstamp", "portlist", "real", "xml"],
+	ATTRIBUTES  => { "type" => ["string", "boolean", "byte", "character", "date-time",
+				    "integer", "ntpstamp", "portlist", "real", "xml"],
 			 "meaning" => [],
 		     },
 	TAGS        => [ CONTENTKEY ],
     }, 
     
+    #idmef0.7
     "CreateTime" => {
 	ATTRIBUTES  => { "ntpstamp" => [] },
 	TAGS        => [ CONTENTKEY ],
     },
     
+    #idmef0.7
     "DetectTime" => {
 	ATTRIBUTES  => { "ntpstamp" => [] },
 	TAGS        => [ CONTENTKEY ],
     },
     
+    #idmef0.7
     "AnalyzerTime" => {
 	ATTRIBUTES  => { "ntpstamp" => [] },
 	TAGS        => [ CONTENTKEY ],
     },
-    
+
+    #idmef0.7    
     "Node" => {
-	ATTRIBUTES  => { "category" => [ "unknown", "ads", "afs", "coda", "dfs", "dns", "kerberos", "nds",
-					 "nis", "nisplus", "nt", "wfw"],
+	ATTRIBUTES  => { "category" => [ "unknown", "ads", "afs", "coda", "dfs", "dns", "hosts", 
+					 "kerberos", "nds", "nis", "nisplus", "nt", "wfw"],
 			 "ident"    => [],
 		     },
 	TAGS        => [ "location", "name" ],
@@ -334,6 +358,7 @@ my $IDMEF_DTD = {
 	MULTI       => [ "Address" ],
     },
     
+    #idmef0.7    					 
     "Address" => {
 	ATTRIBUTES  => { "ident"     => [], "vlan-num"  => [], "vlan-name" => [],
 			 "category"  => [ "unknown", "atm", "e-mail", "lotus-notes", "mac", "sna",
@@ -342,47 +367,55 @@ my $IDMEF_DTD = {
 		     },
 	TAGS        => [ "address", "netmask" ],
     },
-    
+
+    #idmef0.7        
     "User" => {
 	ATTRIBUTES  => { "ident"    => [], "category" => ["unknown", "application", "os-device"] },
 	NODES       => [ "UserId" ],
 	MULTI       => [ "UserId" ],
     },
     
+    #idmef0.7    
     "UserId" => {
 	ATTRIBUTES  => { "ident" => [],
 			 "type"  => [ "current-user", "original-user", "target-user", "user-privs",
-				      "current-group", "group-privs" ],
+				      "current-group", "group-privs", "other-privs" ],
 		     },
 	TAGS        => [ "name", "number" ],
     },
     
+    #idmef0.7    
     "Process" => {
 	ATTRIBUTES  => { "ident" => [] },
 	TAGS        => [ "name", "pid", "path", "arg", "env" ],
 	MULTI       => [ "arg", "env" ],
     },
 
+    #idmef0.7    
     "Service" => {
 	SUBCLASS    => [ "WebService", "SNMPService" ],
 	ATTRIBUTES  => { "ident" => [] },
 	TAGS        => [ "name", "port", "portlist", "protocol" ],
     },
     
+    #idmef0.7    
     "WebService" => {
 	TAGS        => [ "url", "cgi", "http-method", "arg" ],
 	MULTI       => [ "arg" ],
     },
     
+    #idmef0.7    
     "SNMPService" => {
 	TAGS        => [ "oid", "community", "command" ],
     },
     
+    #idmef0.7    
     "FileList" => {
 	NODES       => [ "File" ],
 	MULTI       => [ "File" ],
     },
     
+    #idmef0.7    
     "File" => {
 	ATTRIBUTES  => { "ident"    => [], "category" => ["current","original"], "fstype"   => [] },
 	TAGS        => [ "name", "path", "create-time", "modify-time", "access-time", "data-size",
@@ -390,12 +423,15 @@ my $IDMEF_DTD = {
 	NODES       => [ "FileAccess", "Linkage", "Inode" ],
 	MULTI       => [ "FileAccess", "Linkage" ],
     },
-    
+
+    #idmef0.7        
     "FileAccess" => {
 	TAGS        => [ "permission" ],
 	NODES       => [ "UserId" ],
+	MULTI       => [ "permission" ],
     },
     
+    #idmef0.7    
     "Linkage" => {
 	ATTRIBUTES  => { "category" => ["hard-link", "mount-point", "reparse-point", "shortcut", 
 					"stream", "symbolic-link"] },
@@ -403,6 +439,7 @@ my $IDMEF_DTD = {
 	# ignore File node: the DTD parser does not support recursive nodes
     },
     
+    #idmef0.7    
     "Inode" => { 
 	TAGS        => ["change-time", "number", "major-device", "minor-device", "c-major-device",
 			"c-minor-device"],
@@ -551,7 +588,7 @@ sub load_xml_dtd {
     # call class parser recursively on each node
     if (exists($node->{NODES})) {
 	foreach $key (@{$node->{NODES}}) {
-	    die "IDMEF.pm - Class loader: $k in node $nodename is not a known class.\n" 
+	    croak "IDMEF.pm - Class loader: $k in node $nodename is not a known class.\n" 
 		if (!exists($dtd->{$key}));
 	    $k = join '', @path, $key;
 	    $EXPAND_PATH->{$k} = [ 'N', 0, @path, $key ];
@@ -563,7 +600,7 @@ sub load_xml_dtd {
     if (exists($node->{SUBCLASS})) {
 	pop @path;
 	foreach $key (@{$node->{SUBCLASS}}) {
-	    die "IDMEF.pm - Class loader: subclass $k in node $node->{CLASSNAME} is not a known class.\n" 
+	    croak "IDMEF.pm - Class loader: subclass $k in node $node->{CLASSNAME} is not a known class (IDMEF v$IDMEF_VERSION).\n" 
 		if (!exists($dtd->{$key}));
 	    extend_subclass($node, $dtd->{$key});
 	    $k = join '', @path, $key;
@@ -1019,15 +1056,15 @@ sub add_pathkey_in_result {
 #
 
 sub add_in_simplehash {
-    my ($roothash, $hash, $type, $index, @path, $path_size, $field, @nodes, @subpath);
+    my ($roothash, $hash, $type, $index, @path, $path_size, $field, @nodes);
 
     ($roothash, $hash, $type, $index, @path) = @_;
     $path_size  = @path;
     $field      = $path[$index];
 
-    die "add_in_simplehash: got no path" if ($path_size == 0);
-    die "add_in_simplehash: got index larger than path " if ($index > $path_size);
-    die "add_in_simplehash: can't add a unique key $path[0] which is not a node" 
+    croak "add_in_simplehash: got no path" if ($path_size == 0);
+    croak "add_in_simplehash: got index larger than path " if ($index > $path_size);
+    croak "add_in_simplehash: can't add a unique key $path[0] which is not a node" 
 	if ( ($path_size == 1) && ($type ne 'N') );
     
     $path_size-- if ($type ne 'N');    
@@ -1043,26 +1080,36 @@ sub add_in_simplehash {
 		# field can exist only once in this node, and it has already been
 		# created: need to find the closest higher node that can be multiple,
 		# duplicate it and drop our key there
-		# TODO
 		
 		while ($index > 0) {
 		    $index--;
 		    if (is_multiple($path[$index-1], $path[$index])) {
 			
-			# fork the tag tree at closest node that can be multiple
-			@subpath = @path;
-			splice @subpath, $index+1;
-			add_in_simplehash($roothash, $roothash, 'N', 0, @subpath);
+			# create a new node of $path[$index]
+			add_in_simplehash($roothash, $roothash, 'N', 0, @path[0..$index]);
 			
-			# restart the key insertion process
+			# restart the key insertion process.
+			# NOTE: this works ONLY because simplehash_add_key inserts
+			# a new node/tag in first position in the hash, so that a new
+			# recursive search will catch the new node at first
+			# we hence don't need to loop among all nodes and go through the whole tree
 			return add_in_simplehash($roothash, $roothash, $type, 0, @path);
 		    }
 		}
-		die "add_in_simple_hash: can't add field $field. it already exists and can't be multiple.";
+		
+		# we did not find any father node that can occur multiple times
+		# so this tag/node is not supposed to be multiple
+		croak "add_in_simple_hash: Can't add field \"$field\".".
+		    " It already exists and can't be multiple.".
+		    " (".join("/", splice(@path, 0, $#path))." = ".$path[-1].")";
 	    }
+	    
+	    # here: the field already exists, but is multiple. 
+	    # let's just go on and set its value 
 	}
 
-	# field does not exist or accepts multiple values. create key
+	# we have reach the last tag in tagpath.
+	# now we should add its value and return.
 	if ($type eq 'N') {
 	    simplehash_add_key($hash, $type, $field);
 	} else {
@@ -1077,8 +1124,7 @@ sub add_in_simplehash {
     simplehash_add_key($hash, 'N', $field) if (!exists($hash->{$field}));
 
     # take the first instance of this node, and continue in it
-    @nodes = @{$hash->{$field}};
-    return add_in_simplehash($roothash, $nodes[0], $type, $index+1, @path);
+    return add_in_simplehash($roothash, $hash->{$field}->[0], $type, $index+1, @path);
 }
     
     
@@ -1096,7 +1142,9 @@ sub simplehash_add_key {
     if ($type eq 'N')
     {
 	if (exists($hash->{$key})) {
-	    # add an empty node to the node list, IN FIRST POSITION
+	    # add an empty node to the node list, IN FIRST POSITION 
+	    # (1st position required by add() algorithm)
+	    # this handles nodes that occur multiple times
 	    $hash->{$key} = [ {}, @{$hash->{$key}} ];
 	} else {
 	    # create an empty node
@@ -1128,11 +1176,22 @@ sub simplehash_add_key {
 }
 
 
-	    
-# is_multiple(<rootnode>, <node>)
-#   check is <node> can occur multiple times in <rootnode>
-#   according to the IDMEF DTD. return 1 if yes, 0 if no.
-#
+
+##----------------------------------------------------------------------------------------
+##	    
+## is_multiple($rootnode, $node)
+##
+## ARGS:
+##   rootnode:      an IDMEF node name
+##   node:          an IDMEF node name
+##
+## RETURN: 
+##   1 if node can occur multiple times in rootnode, 0 otherwise
+##
+## DESC:
+##   check is $node can occur multiple times in $rootnode
+##   according to the IDMEF DTD. return 1 if yes, 0 if no.
+##
 
 sub is_multiple {
     my ($class, $flag, $rootnode, $node, $k);
@@ -1165,7 +1224,7 @@ sub check_allowed {
 	return 1 if ($v eq $key);
     }
 
-    croak "add: $key is not an allowed value for $path.\n";
+    croak "add: $key is not an allowed value for $path (IDMEF v$IDMEF_VERSION).\n";
     return 0;
 }
 
@@ -1307,7 +1366,71 @@ sub add {
 	}
     }    
 
-    croak "add: $path is not a known IDMEF tag path\n";
+    croak "add: $path is not a known IDMEF tag path (IDMEF v$IDMEF_VERSION).\n";
+}
+
+
+
+##----------------------------------------------------------------------------------------
+##
+## contains(<idmef>, <tagpath>)
+## 
+## ARGS:
+##   idmef:    a hash representation of an IDMEF message, as received from new or in
+##   tagpath:  a string obtained by concatenating the names of the nested tags, from the
+##             Alert tag down to the closest tag to value.
+##
+## RETURN: 
+##   Non-zero if there is at least one value set to the particular tagpath.
+##   Otherwise zero.
+##
+
+# a non official name for contains, kept to maintain backward compatibility
+sub at_least_one {
+    return contains(@_);
+}
+
+sub contains {
+    my ($idmef, $tag) = @_;
+
+    return 0 if (!exists($EXPAND_PATH->{$tag}));
+
+    # now, follow in the idmef tree the path corresponding
+    # to $tag, until we either find the last tag or have searched
+    # the whole tree and not found the path
+    # this is a recursive algorithm
+    return search_for_path($idmef, splice(@{$EXPAND_PATH->{$tag}}, 2));
+}
+
+
+
+#----------------------------------------------------------------------------------------
+#
+# search_for_path($rootnode, @tagpath)
+#   a recursive algorithm going through the $rootnode tree, looking for 
+#   the $tagpath, until it either finds it (return 1), or has been through
+#   the whole tree without finding it (return 0)
+#   return: 1 if tagpath exists in $rootnode. 0 otherwise
+
+sub search_for_path {
+    my($nodearray, $node, $size);
+    my($rootnode, @path) = @_;
+
+    # if this node does contain closest field in tag path, return 0
+    return 0 if (!exists($rootnode->{$path[0]}));
+
+    # check if we have reached an attribute, ie if path has only one element
+    # if it is the case, and since this tag exists (see above), return 1
+    return 1 if ($#path == 0);
+	
+    # we are looking at a node, so:
+    # go recursively through all the nodes/attributes in this node
+    # until it either find the searched path, or as been through all
+    $nodearray = $rootnode->{$path[0]};
+    foreach $node (@{$nodearray}) {
+	return 1 if (search_for_path($node, @path[1..$#path]));
+    }    
+    return 0;
 }
 
 
@@ -1351,29 +1474,31 @@ sub create_ident {
 
 ##----------------------------------------------------------------------------------------
 ##
-## create_time(<idmef>)
+## create_time(<idmef>, [<epoch>])
 ##
 ## ARGS:
 ##   <idmef>       idmef message object
+##   <epoch>       optional. epoch time (time since January 1, 1970, UTC).
 ##
 ## RETURN: 
 ##   nothing.
 ##
 ## DESC:
 ##   Set the CreateTime field of this idmef message with the current time
-##   in both the content and ntpstamp fields. If no IDMEF type is given,
-##   "Alert" is assumed as default.
-##
+##   (if no epoch argument if provided), or to the time corresponding to
+##   the epoch value provided, in both the content and ntpstamp fields. 
+##   If the IDMEF message does not yet have a type, "Alert" is assumed by
+##   default.
 ##
 
 sub create_time {
     my $idmef = shift;
+    my $utc   = shift || time(); 
 
     my $name = $idmef->get_type();
     $name = "Alert" if (!defined $name);
 
     # add time stamp
-    my $utc = time;
     my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = gmtime($utc);
     $year =~ s/^1/20/;
     $mon  = "0".$mon  if (length($mon) == 1);
@@ -1502,7 +1627,7 @@ This code was developed with the support of Proact Defcom AB, Stockholm, Sweden,
 
 =head1 SEE ALSO
 
-XML::Simple, XML::Parser, XML::Expat, libexpat
+XML::Simple, XML::Parser, XML::Parser::Expat, libexpat
 
 =head1 SYNOPSIS
 
@@ -1512,7 +1637,7 @@ In the following, function calls and function parameters are passed in a perl ob
 
 =over 4
 
-=item B<new>()
+=head2 B<new>()
 
 =over 4
 
@@ -1535,7 +1660,7 @@ C<new> creates and returns a new empty IDMEF message. Use C<add()>, C<create_ide
 
 
 
-=item $idmef->B<in>([PATH|STRING])
+=head2 $idmef->B<in>([PATH|STRING])
 
 =over 4
 
@@ -1561,7 +1686,7 @@ C<in> creates a new IDMEF message from either a string C<STRING> or a file locat
 
 
 
-=item $idmef->B<out>()
+=head2 $idmef->B<out>()
 
 =over 4
  
@@ -1584,7 +1709,7 @@ C<out> returns the IDMEF message as a string.
 
 
 
-=item $idmef->B<create_ident>()
+=head2 $idmef->B<create_ident>()
 
 =over 4
 
@@ -1605,17 +1730,19 @@ C<create_ident> generates a unique IDMEF ident tag and inserts it into this IDME
 
 
 
-=item $idmef->B<create_time>()
+=head2 $idmef->B<create_time>([$epoch])
 
 =over 4
 
-=item B<ARGS> none.
+=item B<ARGS>
+
+I<$epoch>: optional. an epoch time (time in secunds since January 1, 1970, UTC).
 
 =item B<RETURN> nothing.
 
 =item B<DESC>  
    
-C<create_time> sets the IDMEF CreateTime node to the current time. It sets both the ntpstamp and the UTC time stamps of CreateTime.
+C<create_time> sets the IDMEF CreateTime node to the current time (if no epoch argument is provided), or to the time corresponding to the epoch value provided. It sets both the ntpstamp and the UTC time stamps of CreateTime.
 
 =item B<EXAMPLES>
    
@@ -1626,7 +1753,7 @@ C<create_time> sets the IDMEF CreateTime node to the current time. It sets both 
 
 
 
-=item $idmef->B<get_type>()
+=head2 $idmef->B<get_type>()
 
 =over 4
 
@@ -1649,7 +1776,7 @@ C<get_type> returns the type of this IDMEF message as a string. An 'Alert' IDMEF
 
 
 
-=item $idmef->B<add>($tagpath, $value)
+=head2 $idmef->B<add>($tagpath, $value)
 
 =over 4
 
@@ -1736,7 +1863,28 @@ The use of add("AlertAdditionalData", <arg1>, <arg2>, <arg3>) is prefered to the
 
 
 
-=item $idmef->B<to_hash>()
+=head2 $idmef->B<contains>($tagpath)
+
+=over 4
+
+=item B<ARGS> 
+
+I<$tagpath>: a tagpath (see C<add>).
+
+=item B<RETURN>
+   
+1 if there exists in this idmef message a value associated to the given tagpath. 0 otherwise.
+
+=item B<DESC>
+   
+C<contains> is a test function, used to determine whether a value has already been set at a given tagpath.
+
+=back
+
+
+
+
+=head2 $idmef->B<to_hash>()
 
 =over 4
 
@@ -1784,7 +1932,7 @@ C<to_hash> returns a hash enumerating all the contents and attributes of this ID
 
 
 
-=item B<xml_encode>($string)
+=head2 B<xml_encode>($string)
 
 =over 4
 
@@ -1813,7 +1961,7 @@ REM: if you want to convert data to the BYTE[] format, use 'byte_to_string' inst
 
 
 
-=item B<xml_decode>($string)
+=head2 B<xml_decode>($string)
 
 =over 4
 
@@ -1843,7 +1991,7 @@ It also decodes strings encoded with 'byte_to_string'
 
 
 
-=item B<byte_to_string>($bytes)
+=head2 B<byte_to_string>($bytes)
 
 =over 4
 
@@ -1864,7 +2012,7 @@ converts a binary string into its BYTE[] representation, according to the IDMEF 
 
 
 
-=item B<extend_subclass>($IDMEF-class, $Extended-subclass)
+=head2 B<extend_subclass>($IDMEF-class, $Extended-subclass)
 
 =over 4
 

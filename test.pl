@@ -6,7 +6,7 @@
 # change 'tests => 1' to 'tests => last_test_to_print';
 
 use Test;
-BEGIN { plan tests => 3 };
+BEGIN { plan tests => 6 };
 use XML::IDMEF;
 
 ok(1); # If we made it this far, we're ok.
@@ -33,7 +33,7 @@ my($idmef, $str_idmef, $idmef2, $type);
 ##
 
 eval {
-    print "Trying to build a simple IDMEF message...\n";
+    print "  Trying to build a simple IDMEF message...\n";
     
     $idmef = new XML::IDMEF();  
     
@@ -56,7 +56,7 @@ check($@);
 ##
 
 eval {
-    print "Parsing an IDMEF message from a string...\n";
+    print "  Parsing an IDMEF message from a string...\n";
     $idmef2 = (new XML::IDMEF)->in($str_idmef);    
 };
 
@@ -67,7 +67,7 @@ check($@);
 ## test 3: getting type of inslurped idmef
 ##
 
-print "Checking type of parsed IDMEF...\n";
+print "  Checking type of parsed IDMEF...\n";
 $type = $idmef2->get_type();
 if ($type eq "Alert") {
     ok(1);
@@ -75,6 +75,25 @@ if ($type eq "Alert") {
     print "error: get_type returned wrong value ($type)\n";
     ok(0);
 }
+
+
+##
+## test 4: testing at_least_one
+##
+
+my($test1, $test2, $test3);
+print "  Testing at_least_one...\n";
+
+print "  Checking valid path\n";
+ok($idmef->at_least_one("AlertTargetNodename"));
+
+print "  Checking unset valid path\n";
+ok(!$idmef->at_least_one("AlertSourceNodename"));
+
+print "  Checking not valid path\n";
+ok(!$idmef->at_least_one("AlertTargetNodeinterface"));
+
+
 
 
 
