@@ -27,7 +27,7 @@ our @EXPORT = qw(xml_encode
 		 extend_idmef	
 		 );
 
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 
 
@@ -269,7 +269,7 @@ my $IDMEF_DTD = {
     },
     
     "Source" => {
-	ATTRIBUTES  => { "ident"      => [], "interfaces" => [], "spoofed"    => ["unknown", "yes", "no"] },
+	ATTRIBUTES  => { "ident"      => [], "interface" => [], "spoofed"    => ["unknown", "yes", "no"] },
 	NODES       => [ "Node", "User", "Process", "Service" ],
     },
     

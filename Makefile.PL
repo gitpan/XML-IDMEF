@@ -9,6 +9,6 @@ WriteMakefile(
                              'XML::Parser::Expat' => '0', 
                            }, 
     ($] >= 5.005 ?    ## Add these new keywords supported since 5.005
-      (ABSTRACT_FROM => 'IDMEF.pm', # retrieve abstract from module
+      (ABSTRACT   => 'IDMEF library for parsing/creating IDMEF messages',
        AUTHOR     => 'Erwan Lemonnier (erwan@cpan.org)') : ()),
 );

@@ -4,23 +4,20 @@ DESCRIPTION
 
   IDMEF module is a wrapper around XML::Simple, providing an interface
   designed to simplify the parsing and creation of IDMEF messages. IDMEF
-  is an XML based standard for representing Intrusion Detection related
+  is an XML based standard for representing Intrusion Detection alert
   messages (http://www.silicondefense.com/idwg/).
 
-  The interface provided by IDMEF is designed to make it very simple to
-  build an IDMEF message while parsing a log file with a key-value 
+  The interface provided by XML::IDMEF is designed to make it very simple
+  to build an IDMEF message while parsing a log file with a key-value 
   structure, which is the most common situation when writing a log export
   module for a given software.
-
-  IDMEF.pm is still in beta stage. It misses documentation.
-  To extract the api documentation, do a 'cat IDMEF.pm |grep "##"'.
 
 
   ******* WARNING ******* WARNING ******* WARNING ******* WARNING *******
 
    This release (0.0X) is a beta release and has not been thoroughly
    tested. Please try it out if you can and report success/failure to
-   the author.
+   the author (erwan@cpan.org).
 
    For production systems, please be careful.
 
@@ -31,7 +28,7 @@ DESCRIPTION
 
 PREREQUISITES
 
-  Requires XML::Simple, XML::Expat & XML::Parser.
+  Requires XML::Simple, XML::Parser::Expat & XML::Parser.
 
 
 BUILDING/INSTALLING
