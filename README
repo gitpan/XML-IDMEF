@@ -15,11 +15,19 @@ DESCRIPTION
 
   ******* WARNING ******* WARNING ******* WARNING ******* WARNING *******
 
-   This release (0.0X) is a beta release and has not been thoroughly
+   This release (0.09) introduces major internal changes compared
+   with the previous versions. Furthermore, it implements the most
+   *final* version of IDMEF. 
+
+   You'd hence better check that using this version of the module
+   does not break anything in your code (it should not, but, well...
+   you know...)
+
+   And of course: this is a beta release and has not been thoroughly
    tested. Please try it out if you can and report success/failure to
    the author (erwan@cpan.org).
 
-   For production systems, please be careful.
+   Use in production systems is at your own risks.
 
   ******* WARNING ******* WARNING ******* WARNING ******* WARNING *******
 
@@ -28,7 +36,7 @@ DESCRIPTION
 
 PREREQUISITES
 
-  Requires XML::Simple, XML::Parser::Expat & XML::Parser.
+  Requires XML::DOM and a XML::Parser.
 
 
 BUILDING/INSTALLING
@@ -60,14 +68,21 @@ STATUS
 
 NEW IN THIS RELEASE
 
-  Everything ;)
-
+  The API is now compliant with IDMEF 1.0, and out() respects the order
+  of IDMEF tags, as specified in the IDMEF DTD.
   See 'Changes' for a detailed history.
+
+
+BUGS
+  
+  XML::IDMEF uses internally a simplified version of the IDMEF DTD, which makes
+  that this module will fail to create some very specific IDMEF messages. 
+  In particular, recursive File tags are not accepted.
 
 
 COPYRIGHT
 
-  Copyright 2002 Erwan Lemonnier, on behalf of Proact Defcom. 
+  Copyright 2002 Erwan Lemonnier.
 
   This module is free software under BSD license.
 

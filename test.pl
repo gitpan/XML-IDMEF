@@ -1,3 +1,5 @@
+#!/usr/bin/perl
+
 # Before `make install' is performed this script should be runnable with
 # `make test'. After `make install' it should work as `perl test.pl'
 
@@ -5,11 +7,20 @@
 
 # change 'tests => 1' to 'tests => last_test_to_print';
 
+use Data::Dumper;
 use Test;
-BEGIN { plan tests => 6 };
+BEGIN { plan tests => 13 };
 use XML::IDMEF;
 
-ok(1); # If we made it this far, we're ok.
+$| = 1;
+
+title("Tested module loadability.");
+ok(1); # If we made it this far, the module is loadable.
+
+#my $i = XML::IDMEF::in("");
+#print $i->toString;
+#exit;
+
 
 #########################
 
@@ -17,84 +28,224 @@ ok(1); # If we made it this far, we're ok.
 sub check {
     $error = shift;
     if ($error) {
-	print "error: $error\n";
+	print "\nerror: $error\n";
 	ok(0);
     } else {
 	ok(1);
     }
 }
 
+sub title {
+    print "=> ".shift(@_)."                  \t";
+}
+
 
 
 my($idmef, $str_idmef, $idmef2, $type);
 
+#
+# dev tests
+#
+
+#$idmef = XML::IDMEF::in({}, "idmef.example.2");
+
+my $ST_IDMEF = "<?xml version='1.0' encoding='UTF-8'?>\n<!DOCTYPE IDMEF-Message PUBLIC '-//IETF//DTD RFC XXXX IDMEF v1.0//EN' 'idmef-message.dtd'>\n<IDMEF-Message version='1.0'>\n<Alert ident='abc123456789'>\n<Analyzer analyzerid='bc-fs-sensor13'>\n<Node category='dns'>\n<name>fileserver.example.com</name>\n</Node>\n</Analyzer>\n</Alert>\n</IDMEF-Message>";
+
+
 ##
-## test 1: create simple IDMEF message object
+## test: create new message
 ##
 
+title "Test creating new idmef message...";
 eval {
-    print "  Trying to build a simple IDMEF message...\n";
+    $idmef = new XML::IDMEF();
+
+    check("new XML::IDMEF did not return a proper IDMEF message.")
+	if ($idmef->out !~ '<\?xml version="1.0" encoding="UTF-8"\?>.*
+<!DOCTYPE IDMEF-Message PUBLIC "-//IETF//DTD RFC XXXX IDMEF v1.0//EN" "idmef-message.dtd">.*');
+};
+check($@);
+
+
+##
+## test parsing idmef string
+##
+
+title "Test parsing IDMEF string...";
+eval {
+    $idmef = new XML::IDMEF();
+    $idmef->in($ST_IDMEF);
+};
+check($@);
+
+
+##
+## test get_type & get_root
+##
+
+title "Testing return value of get_root & get_type...";
+
+check("get_root did not return right root name.")
+    if ($idmef->get_root ne "IDMEF-Message");
+
+check("get_type did not return right message type.")
+    if ($idmef->get_type ne "Alert");
+
+ok(1);
+
+
+##
+## test: contain key
+##
+
+title "Testing contains()...";
+
+print "*";
+check("contains() says existing node does not exists.")
+    if ($idmef->contains("AlertAnalyzerNode") != 1);
+
+print "*";
+check("contains() says non-existing node exists.")
+    if ($idmef->contains("AlertNode") != 0);
+
+print "*";
+check("contains() says existing tag does not exists.")
+    if ($idmef->contains("AlertAnalyzeranalyzerid") != 1);
+
+print "* ";
+check("contains() says non-existing tag exists.")
+    if ($idmef->contains("Alertid") != 0);
     
-    $idmef = new XML::IDMEF();  
+ok(1);
+
+
+##
+## test: add attributes
+##
+
+$idmef = new XML::IDMEF;
+
+title "Test adding attributes to empty message...";
+eval {
+    $idmef->add("AlertTargetNodecategory", "unknown");
+    $idmef->add("AlertSourceNodeAddressident", "45");
+    $idmef->add("AlertClassificationorigin", "unknown");
+
+    check("add() did not perform as expected when adding attributes.")
+	if ($idmef->out !~ '.*<IDMEF-Message><Alert><Source><Node><Address ident="45"/></Node></Source><Target><Node category="unknown"/></Target><Classification origin="unknown"/></Alert></IDMEF-Message>.*');
+};
+check($@);
+
+
+##
+## test: add nodes
+##
+
+title "Test adding nodes...";
+eval {
+    $idmef->add("AlertAssessment");
+    $idmef->add("AlertTargetFileListFileLinkage");
+    $idmef->add("AlertTargetFileListFileLinkage");
+    $idmef->add("AlertTargetFileList");
+
+    check("add() did not perform as expected when adding nodes.")
+	if ($idmef->out !~ "<Target><FileList/></Target><Target><Node category=\"unknown\"/><FileList><File><Linkage/><Linkage/></File></FileList></Target>");
+};
+check($@);
+
+
+##
+## test: add content
+##
+
+title "Test adding contents...";
+eval {
+    $idmef->add("AlertAdditionalData","some text");
+    $idmef->add("AlertAdditionalDatatype","xml");
+    $idmef->add("AlertAdditionalData","some other text");
+
+    check("add() did not perform as expected when adding contents.")
+	if ($idmef->out !~ '.*<IDMEF-Message><Alert><Source><Node><Address ident="45"/></Node></Source><Target><FileList/></Target><Target><Node category="unknown"/><FileList><File><Linkage/><Linkage/></File></FileList></Target><Classification origin="unknown"/><Assessment/><AdditionalData>some other text</AdditionalData><AdditionalData type="xml">some text</AdditionalData></Alert></IDMEF-Message>.*');
+};
+check($@);
     
+
+##
+## test: adding id 
+##
+
+title "Test create_ident()...";
+eval {
     $idmef->create_ident();
-    $idmef->create_time();
-
-    $idmef->add("AlertTargetNodename", "mynode");
-    $idmef->add("AlertAdditionalData", "value1", "data1"); 
-    $idmef->add("AlertAdditionalData", "value2", "data2");
-    $idmef->add("AlertAnalyzermodel", "myids");
-    
-    $str_idmef =  $idmef->out();
 };
-
 check($@);
 
 
 ##
-## test 2: read in the IDMEF string
+## test to_hash
 ##
+ 
+title("Test to_hash()...");
 
 eval {
-    print "  Parsing an IDMEF message from a string...\n";
-    $idmef2 = (new XML::IDMEF)->in($str_idmef);    
+    $idmef->to_hash;
 };
-
 check($@);
 
 
 ##
-## test 3: getting type of inslurped idmef
+## test: create time
 ##
 
-print "  Checking type of parsed IDMEF...\n";
-$type = $idmef2->get_type();
-if ($type eq "Alert") {
-    ok(1);
-} else {
-    print "error: get_type returned wrong value ($type)\n";
-    ok(0);
-}
+title "Test create_time()...";
+eval {
+    $idmef = new XML::IDMEF;
+
+    $idmef->create_time(125500);
+
+    check("create_time() returned a wrong time tag.")
+    if ($idmef->out() !~ '.*<IDMEF-Message><Alert><CreateTime ntpstamp="0x83ac68bc.0x0">1970-01-02-T10:51:40Z</CreateTime></Alert></IDMEF-Message>.*');
+};
+check($@);
 
 
 ##
-## test 4: testing at_least_one
+## test additionaldata
 ##
 
-my($test1, $test2, $test3);
-print "  Testing at_least_one...\n";
+title "Test add() with AdditionalData...";
 
-print "  Checking valid path\n";
-ok($idmef->at_least_one("AlertTargetNodename"));
+$idmef = new XML::IDMEF;
 
-print "  Checking unset valid path\n";
-ok(!$idmef->at_least_one("AlertSourceNodename"));
+$idmef->add("AlertAdditionalData", "value0"); 
+$idmef->add("AlertAdditionalData", "value1");
+$idmef->add("AlertAdditionalDatameaning", "data1");
+$idmef->add("AlertAdditionalData", "value2", "data2");   
+$idmef->add("AlertAdditionalData", "value3", "data3", "string");
 
-print "  Checking not valid path\n";
-ok(!$idmef->at_least_one("AlertTargetNodeinterface"));
+check("add() did not handle AdditionalData properly.")
+    if ($idmef->out() !~ '.*<IDMEF-Message><Alert><AdditionalData meaning="data3" type="string">value3</AdditionalData><AdditionalData meaning="data2" type="string">value2</AdditionalData><AdditionalData meaning="data1">value1</AdditionalData><AdditionalData>value0</AdditionalData></Alert></IDMEF-Message>.*');
+
+ok(1);
 
 
+##
+## test encoding of special characters
+##
+
+title("Test encoding of special characters...");
+
+my $string1 = "hi bob&\"&amp;&#x0065";
+
+$idmef = new XML::IDMEF;
+
+$idmef->add("AlertAdditionalData", "$string1");
+
+check("add() did not handle special characters encoding according to XML specs.")
+    if ($idmef->out() !~ '.*<IDMEF-Message><Alert><AdditionalData>hi bob&amp;&quot;&amp;amp;&amp;#x0065</AdditionalData></Alert></IDMEF-Message>.*');
+
+ok(1);
 
 
-
-
+#$idmef = $idmef->in("idmef.example.1");
+#print Dumper($idmef->to_hash);

@@ -1,4 +1,4 @@
-# $Id: IDMEF.pm,v 1.13 2002/12/20 09:23:04 erwan Exp $
+# $Id: IDMEF.pm,v 1.14 2003/06/04 13:51:31 erwan Exp $
 
 package XML::IDMEF;
 
@@ -9,7 +9,7 @@ use warnings;
 
 # various includes
 use Carp;
-use XML::Simple;
+use XML::DOM;
 use Data::Dumper;
 
 # export, version, inheritance
@@ -25,9 +25,13 @@ our @EXPORT = qw(xml_encode
 		 xml_decode
 		 byte_to_string
 		 extend_idmef	
+		 extend_dtd
+		 set_doctype_name
+		 set_doctype_sysid
+		 set_doctype_pubid
 		 );
 
-our $VERSION = '0.08';
+our $VERSION = '0.09';
 
 
 
@@ -40,7 +44,7 @@ our $VERSION = '0.08';
 ## DESC:
 ##
 ##    IDMEF.pm is an interface for simply creating and parsing IDMEF messages.
-##    It is compliant with IDMEF v0.7, and hence provides calls for building Alert,
+##    It is compliant with IDMEF v1.0, and hence provides calls for building Alert,
 ##    ToolAlert, CorrelationAlert, OverflowAlert and Heartbeat IDMEF messages.
 ##
 ##    This interface has been designed for simplifying the task of translating a
@@ -61,17 +65,21 @@ our $VERSION = '0.08';
 ##    An interface to load and parse an IDMEF message is also provided (with the
 ##    'to_hash' function), but is quite limited.
 ##
-##    This module contains a generic XML DTD parser and include a class based definition
-##    of the IDMEF DTD. It can hence easily be upgraded or extended to support new XML
-##    node. For information on how to extend IDMEF with IDMEF.pm, read the documentation
-##    in the source code.
+##    This module is based on XML::DOM and contains a simplified version of the latest
+##    IDMEF DTD. It is hence DTD aware and perform some validity checks on the IDMEF
+##    message treated, in an attempt at easying the process of producing valid IDMEF
+##    messages.
+##
+##    This simplified internal DTD representation can easily be upgraded or extended to
+##    support new XML node. For information on how to extend IDMEF with IDMEF.pm, read
+##    the documentation in the source code.
 ## 
 ##
 ## REM: to extract the api documentation, do 'cat IDMEF.pm | grep "##" | sed -e "s/##//"'
 ##
 ##
 ## BSD LICENSE:
-## Copyright (c) 2002, Proact Defcom
+##
 ##         All rights reserved.
 ##
 ##         Redistribution and use in source and binary forms, with or without modification, are permitted
@@ -124,10 +132,6 @@ our $VERSION = '0.08';
 
 
 
-# empty idmef template
-use constant EMPTYIDMEF  => "<IDMEF-Message version=\"0.5\"></IDMEF-Message>";
-
-
 
 #
 # IDMEF DTD REPRESENTATION
@@ -163,308 +167,373 @@ use constant EMPTYIDMEF  => "<IDMEF-Message version=\"0.5\"></IDMEF-Message>";
 # DTD hash:
 # ---------
 #
-# A DTD is represented as a hash where ech key is the name of a node, and each value
-# a hash encoding the corresponding 'class' definition of this node.
-# A 'class' is a generic template describing one IDMEF node.
+# A DTD is represented as a hash where each key is the name of a node, and each value
+# a hash encoding the corresponding DTD definition of this node.
+# This hash describes the attributes, children and content type of this node,
+# and can be deduced directly from the corresponding ELEMENT and ATTRIBUTE definitions
+# in the DTD. Yet, some subtilities from the DTD, such as complex combinations
+# of allowed children order and occurence, can not be represented in this model.
+# That's why this DTD representation only is a pseudo-DTD, and will not be able 
+# to comply to some case of complex DTDs.
+#
 # A node has a name, which is its tag string. This name is the node's key in the DTD
 # hash.
-# A node may have subnodes. These subnodes are listed in an anonymous array associated
-# with the 'SUBCLASS' key of the class hash. 
-# A node may contain nested tags, listed in the array associated to the 'TAGS' key.
-# Some nodes may accept a content without nested tags (ex: AdditionalData has
-# a content value without surrounding tags. CreateTime as well). To represent this
-# special case of tag content, add the keyword 'CONTENTKEY' to the TAGS array.
-# A node can also have attributes, which are represented as keys of ATTRIBUTES
+#
+# A node may has children nodes. These children are listed in an anonymous array 
+# associated to the CHILDREN key. Each element of this children array is a string 
+# made of the name of the child node preceded by a one letter prefix representing
+# the allowed occurencies of this child node. This prefix should be one of:
+#
+#   prefix    meaning
+#   ------    -------
+#
+#   ?         0 or 1 occurences
+#   +         1 or more 
+#   *         0 or more
+#   1         exactly one
+#   #         unknown   (in practice, same as *)
+#
+# The order of the children names in the children array reflects the order of
+# children nodes in the DTD. As a result, the XML::IDMEF API allows only to
+# create XML messages with one given order of children in each node. If the DTD
+# allows other combinations, it can not be encoded in XML::IDMEF, and you will
+# have to choose one of the poccible combinations when writting the pseudo-DTD.
+# In some cases, this won't be possible. That's why this API can not yet be
+# generalised to any generating any XML format. 
+#
+# A node can also have attributes, which are represented as keys of the ATTRIBUTES
 # hash. The value associated with each key is an array of the values allowed for this
 # attributes, or an empty array if there are no restrictions on the value.
-# Finally, some of the node's components (attribute, tag or subnode) may occur more
-# than once. These particular components are listed in the array associated with the
-# key 'MULTI'.
 #
-# ex: DTD key-value pair
+# Finally, a node can have a content, declared under the CONTENT key. That key can
+# accept 3 values: ANY, PCDATA, EMPTY. In practice, all are treated as PCDATA internaly.
 #
-# "Classname" = {
-#            SUBCLASS    => [ "subClass1", "subClass2"... ],
-#            TAGS        => [ CONTENTKEY, "tag1",... ], 
-#            NODES       => [ "Class1", "Class2",... ],
+# ex: DTD entity definition
+#
+# "EntityName" = {
 #            ATTRIBUTES  => { "attribute1" => [ list of values ],
 #                             "attribute2" => [],
 #                             ...
 #                           },
-#            MULTI       => ["Class2", "attribute1",...],
+#            CHILDREN    => [ "<occurence_code>elem1", "<occurence_code>elem2"... ],
+#            CONTENT     => ANY | PCDATA | EMPTY
 #          }
 #
 
 
 #
-# CONTENTKEY:
-# -----------
+# CONTENT:
+# --------
 #
-# content key keyword. special tag key meaning that the associated value
-# is a tag content without surrounding simple tags (tags without attribute)
-# cf CreateTime & AdditionalData. Don't choose an idmef official tagname, otherwise conflict
+# the official xml contents supported by this simplified DTD representation
 
-use constant CONTENTKEY => "PerlIDMEFContent";
+use constant ANY    => "ANY";
+use constant PCDATA => "PCDATA";
+use constant EMPTY  => "EMPTY";
+
 
 
 #
 # IDMEF_DTD:
 # ----------
 #
-# A hash encoding the whole IDMEF DTD, as defined in the draft rfc.
-# It contains definitions for all the xml classes necessary to build
-# the root IDMEF messages of type Alert and Heartbeat, as well as their
-# subclasses.
+# A hash encoding all the xml entities defined in the IDMEF DTD, as
+# specified in the version $IDMEF_VERSION of the IDMEF draft.
+#
+# REM: this is a simplified DTD representation and does not reflect
+# exactly the content of the IDMEF DTD.
+# In particular, this representation does not properly represent
+# for each entity the allowed number and occurences of its children.
 
 # version of the IDMEF draft used for this DTD
-my $IDMEF_VERSION = "0.7";
+my $IDMEF_VERSION = "1.0";
 
 my $IDMEF_DTD = {
 
-    #idmef0.7    
+    # each children of an entity should have a 1 letter code prefixed
+    # to its name, reflecting the occurences, as allowed by the DTD, and
+    # according to the list below:
+ 
+    "IDMEF-Message" => {
+	ATTRIBUTES  => { "version" => ["1.0"] },
+	CHILDREN    => [ "#Alert", "#Heartbeat" ],
+    },
+
+    "Alert" => {
+	ATTRIBUTES  => { "ident"  => [] },
+	CHILDREN    => [ "1Analyzer", "1CreateTime", "?DetectTime", "?AnalyzerTime",
+			 "*Source", "*Target", "+Classification", "?Assessment", 
+			 "#ToolAlert", "#CorrelationAlert", "#OverflowAlert", "*AdditionalData" ],
+    },
+
     "Heartbeat" => {
 	ATTRIBUTES  => { "ident" => [] },
-	NODES       => [ "Analyzer", "CreateTime", "AnalyzerTime",
-			 "AdditionalData" ],
-	MULTI       => [ "AdditionalData" ],
+	CHILDREN    => [ "1Analyzer", "1CreateTime", "?AnalyzerTime", "*AdditionalData" ],
     },
 
-    #idmef0.7    
-    "Alert" => {
-	SUBCLASS    => [ "ToolAlert", "CorrelationAlert", "OverflowAlert" ],
-	ATTRIBUTES  => { "ident"  => [] },           #, "impact" => [], "action" => [] },
-	NODES       => [ "Analyzer", "CreateTime", "DetectTime", "AnalyzerTime",
-			 "Source", "Target", "Classification", "Assessment", 
-			 "AdditionalData" ],
-	MULTI       => [ "Source", "Target", "Classification",
-			 "AdditionalData" ],
-    },
-
-    #idmef0.7    
-    "ToolAlert"  => { 
-	NODES       => [ "alertident" ],
-	TAGS        => [ "name", "command" ], 
-	MULTI       => [ "alertident" ],
-    },
-
-    #idmef0.7    
     "CorrelationAlert" => {
-	NODES       => [ "alertident" ],
-	TAGS        => [ "name" ],
-	MULTI       => [ "alertident" ],
+	CHILDREN    => [ "1name", "*alertident" ],
     },
 
-    #idmef0.7    
     "OverflowAlert" => {
-	TAGS        => [ "program", "size", "buffer" ],
+	CHILDREN    => [ "1program", "?size", "?buffer" ],
     },
 
-    #idmef0.7    
-    "alertident" => {
-	ATTRIBUTES  => { "analyzerid" => [] },
-	TAGS        => [ CONTENTKEY ],
+    "ToolAlert"  => { 
+	NODES       => [ "1name", "?command", "+alertident" ],
     },
 
-    #idmef0.7
-    "Analyzer" => {
-        ATTRIBUTES  => { "analyzerid"   => [], "manufacturer" => [], "model"        => [],
-			 "version"      => [], "class"        => [], "ostype"       => [],
-			 "osversion"    => [], 
-		     },
-	NODES       => [ "Node", "Process" ],
-    },
+    #
+    # Additional Data
+    #
 
-    #idmef0.7
-    "Classification" => {
-	ATTRIBUTES  => { "origin" => ["unknown", "bugtraqid", "cve", "vendor-specific"] },
-	TAGS        => [ "name", "url" ],
-    },
-    
-    #idmef0.7
-    "Source" => {
-	ATTRIBUTES  => { "ident"      => [], "interface" => [],
-			 "spoofed"    => ["unknown", "yes", "no"] },
-	NODES       => [ "Node", "User", "Process", "Service" ],
-    },
-    
-    #idmef0.7
-    "Target" => {
-	ATTRIBUTES  => { "ident" => [], "decoy" => ["unknown","yes","no"], "interface" => [] },
-	NODES       => [ "Node", "User", "Process", "Service", "FileList" ],
-    },
-    
-    #idmef0.7
-    "Assessment" => {
-	NODES       => [ "Impact", "Confidence", "Action" ],
-	MULTI       => [ "Action" ],
-    },
-
-    #idmef0.7    
-    "Impact" => {
-	ATTRIBUTES  => { "severity"   => ["low", "medium", "high"],
-			 "completion" => ["failed", "succeeded"],
-			 "type"       => ["admin", "dos", "file", "recon", "user", "other"],
-		     },
-	TAGS        => [ CONTENTKEY ],
-    },
-    
-    #idmef0.7
-    "Action" => {
-	ATTRIBUTES  => { "category" => ["block-installed", "notification-sent", "taken-offline"] },
-	TAGS        => [ CONTENTKEY ],
-    },
-    
-    #idmef0.7
-    "Confidence" => {
-	ATTRIBUTES  => { "rating" => ["low", "medium", "high", "numeric"] },
-	TAGS        => [ CONTENTKEY ],
-    }, 
-    
-    #idmef0.7
     "AdditionalData" => {
 	ATTRIBUTES  => { "type" => ["string", "boolean", "byte", "character", "date-time",
 				    "integer", "ntpstamp", "portlist", "real", "xml"],
 			 "meaning" => [],
 		     },
-	TAGS        => [ CONTENTKEY ],
+	CONTENT     => ANY,
     }, 
-    
-    #idmef0.7
-    "CreateTime" => {
-	ATTRIBUTES  => { "ntpstamp" => [] },
-	TAGS        => [ CONTENTKEY ],
+
+    #
+    # Elements related to identifying entities
+    #
+
+    "Analyzer" => {
+        ATTRIBUTES  => { "analyzerid"   => [], "manufacturer" => [], "model"        => [],
+			 "version"      => [], "class"        => [], "ostype"       => [],
+			 "osversion"    => [], 
+		     },
+	CHILDREN    => [ "?Node", "?Process" ],
     },
     
-    #idmef0.7
-    "DetectTime" => {
-	ATTRIBUTES  => { "ntpstamp" => [] },
-	TAGS        => [ CONTENTKEY ],
-    },
-    
-    #idmef0.7
-    "AnalyzerTime" => {
-	ATTRIBUTES  => { "ntpstamp" => [] },
-	TAGS        => [ CONTENTKEY ],
+    "Source" => {
+	ATTRIBUTES  => { "ident"      => [], "interface" => [],
+			 "spoofed"    => ["unknown", "yes", "no"] },
+	CHILDREN    => [ "?Node", "?User", "?Process", "?Service" ],
     },
 
-    #idmef0.7    
-    "Node" => {
-	ATTRIBUTES  => { "category" => [ "unknown", "ads", "afs", "coda", "dfs", "dns", "hosts", 
-					 "kerberos", "nds", "nis", "nisplus", "nt", "wfw"],
-			 "ident"    => [],
-		     },
-	TAGS        => [ "location", "name" ],
-	NODES       => [ "Address" ],
-	MULTI       => [ "Address" ],
+    "Target" => {
+	ATTRIBUTES  => { "ident" => [], "decoy" => ["unknown","yes","no"], "interface" => [] },
+	CHILDREN    => [ "?Node", "?User", "?Process", "?Service", "?FileList" ],
     },
-    
-    #idmef0.7    					 
+
+    #
+    # Support elements used for providing info about entities
+    #
+
     "Address" => {
 	ATTRIBUTES  => { "ident"     => [], "vlan-num"  => [], "vlan-name" => [],
 			 "category"  => [ "unknown", "atm", "e-mail", "lotus-notes", "mac", "sna",
 					  "vm", "ipv4-addr", "ipv4-addr-hex", "ipv4-net", "ipv4-net-mask",
 					  "ipv6-addr", "ipv6-addr-hex", "ipv6-net", "ipv6-net-mask" ],
 		     },
-	TAGS        => [ "address", "netmask" ],
+	CHILDREN    => [ "1address", "?netmask" ],
     },
 
-    #idmef0.7        
-    "User" => {
-	ATTRIBUTES  => { "ident"    => [], "category" => ["unknown", "application", "os-device"] },
-	NODES       => [ "UserId" ],
-	MULTI       => [ "UserId" ],
+    "Assessment" => {
+	CHILDREN    => [ "?Impact", "*Action", "?Confidence" ],
+    },
+
+    "Classification" => {
+	ATTRIBUTES  => { "origin" => ["unknown", "bugtraqid", "cve", "vendor-specific"] },
+	CHILDREN    => [ "1name", "1url" ],
     },
     
-    #idmef0.7    
+    "File" => {
+	ATTRIBUTES  => { "ident"    => [], "category" => ["current","original"], "fstype"   => [] },
+	CHILDREN    => [ "1name", "1path", "?create-time", "?modify-time", "?access-time", "?data-size",
+			 "?disk-size", "*FileAccess", "*Linkage", "?Inode" ],
+    },
+
+    "FileAccess" => {
+        CHILDREN    => [ "1UserId", "+permission" ],
+    },
+
+    "FileList" => {
+	CHILDREN    => [ "+File" ],
+    },
+
+    "Inode" => { 
+	CHILDREN    => ["?change-time", "?number", "?major-device", "?minor-device", "?c-major-device",
+			"?c-minor-device"],
+    },    
+    
+    "Linkage" => {
+	ATTRIBUTES  => { "category" => ["hard-link", "mount-point", "reparse-point", "shortcut", 
+					"stream", "symbolic-link"] },
+	CHILDREN    => [ "1name", "1path" ], 
+# ALERT! ignore File node: the DTD parser does not support recursive nodes
+    },
+
+    "Node" => {
+	ATTRIBUTES  => { "category" => [ "unknown", "ads", "afs", "coda", "dfs", "dns", "hosts", 
+					 "kerberos", "nds", "nis", "nisplus", "nt", "wfw"],
+			 "ident"    => [],
+		     },
+	CHILDREN    => [ "?location", "?name", "*Address" ],
+    },
+
+    "Process" => {
+	ATTRIBUTES  => { "ident" => [] },
+	CHILDREN    => [ "1name", "?pid", "?path", "*arg", "*env" ],
+    },
+    
+    "Service" => {
+	ATTRIBUTES  => { "ident" => [] },
+	CHILDREN    => [ "?name", "?port", "?portlist", "?protocol", "?SNMPService", "?WebService" ],
+    },
+
+    "SNMPService" => {
+	CHILDREN    => [ "?oid", "?community", "?securityName", "?contextName",
+			 "?contextEngineID", "?command" ],
+    },
+    
+    "User" => {
+	ATTRIBUTES  => { "ident"    => [], "category" => ["unknown", "application", "os-device"] },
+	CHILDREN    => [ "+UserId" ],
+    },
+
     "UserId" => {
 	ATTRIBUTES  => { "ident" => [],
 			 "type"  => [ "current-user", "original-user", "target-user", "user-privs",
 				      "current-group", "group-privs", "other-privs" ],
 		     },
-	TAGS        => [ "name", "number" ],
+	CHILDREN    => [ "?name", "?number" ],
     },
     
-    #idmef0.7    
-    "Process" => {
-	ATTRIBUTES  => { "ident" => [] },
-	TAGS        => [ "name", "pid", "path", "arg", "env" ],
-	MULTI       => [ "arg", "env" ],
-    },
-
-    #idmef0.7    
-    "Service" => {
-	SUBCLASS    => [ "WebService", "SNMPService" ],
-	ATTRIBUTES  => { "ident" => [] },
-	TAGS        => [ "name", "port", "portlist", "protocol" ],
-    },
-    
-    #idmef0.7    
     "WebService" => {
-	TAGS        => [ "url", "cgi", "http-method", "arg" ],
-	MULTI       => [ "arg" ],
-    },
-    
-    #idmef0.7    
-    "SNMPService" => {
-	TAGS        => [ "oid", "community", "command" ],
-    },
-    
-    #idmef0.7    
-    "FileList" => {
-	NODES       => [ "File" ],
-	MULTI       => [ "File" ],
-    },
-    
-    #idmef0.7    
-    "File" => {
-	ATTRIBUTES  => { "ident"    => [], "category" => ["current","original"], "fstype"   => [] },
-	TAGS        => [ "name", "path", "create-time", "modify-time", "access-time", "data-size",
-			 "disk-size" ],
-	NODES       => [ "FileAccess", "Linkage", "Inode" ],
-	MULTI       => [ "FileAccess", "Linkage" ],
+	CHILDREN    => [ "1url", "?cgi", "?http-method", "*arg" ],
     },
 
-    #idmef0.7        
-    "FileAccess" => {
-	TAGS        => [ "permission" ],
-	NODES       => [ "UserId" ],
-	MULTI       => [ "permission" ],
+    #
+    # Simple elements with sub elements or attributes of a special nature
+    #
+
+    "Action" => {
+	ATTRIBUTES  => { "category" => ["block-installed", "notification-sent", "taken-offline", "other"] },
+	CONTENT     => PCDATA,
     },
     
-    #idmef0.7    
-    "Linkage" => {
-	ATTRIBUTES  => { "category" => ["hard-link", "mount-point", "reparse-point", "shortcut", 
-					"stream", "symbolic-link"] },
-	TAGS        => [ "name", "path" ], 
-	# ignore File node: the DTD parser does not support recursive nodes
+    "AnalyzerTime" => {
+	ATTRIBUTES  => { "ntpstamp" => [] },
+	CONTENT     => PCDATA,
     },
     
-    #idmef0.7    
-    "Inode" => { 
-	TAGS        => ["change-time", "number", "major-device", "minor-device", "c-major-device",
-			"c-minor-device"],
+    "Confidence" => {
+	ATTRIBUTES  => { "rating" => ["low", "medium", "high", "numeric"] },
+	CONTENT     => PCDATA,
+    }, 
+    
+    "CreateTime" => {
+	ATTRIBUTES  => { "ntpstamp" => [] },
+	CONTENT     => PCDATA,
     },
+    
+    "DetectTime" => {
+	ATTRIBUTES  => { "ntpstamp" => [] },
+	CONTENT     => PCDATA,
+    },
+
+    "Impact" => {
+	ATTRIBUTES  => { "severity"   => ["low", "medium", "high"],
+			 "completion" => ["failed", "succeeded"],
+			 "type"       => ["admin", "dos", "file", "recon", "user", "other"],
+		     },
+	CONTENT     => PCDATA,
+    },
+
+    "alertident" => {
+	ATTRIBUTES  => { "analyzerid" => [] },
+	CONTENT     => PCDATA,
+    },
+
+    #
+    # Simple elements with no sub-elements and no attributes
+    #
+    
+    "access-time"     => { CONTENT => PCDATA },
+    "address"         => { CONTENT => PCDATA },
+    "arg"             => { CONTENT => PCDATA },
+    "buffer"          => { CONTENT => PCDATA },
+    "c-major-device"  => { CONTENT => PCDATA },
+    "c-minor-device"  => { CONTENT => PCDATA },
+    "cgi"             => { CONTENT => PCDATA },
+    "change-time"     => { CONTENT => PCDATA },
+    "command"         => { CONTENT => PCDATA },
+    "community"       => { CONTENT => PCDATA },
+    "create-time"     => { CONTENT => PCDATA },
+    "data-size"       => { CONTENT => PCDATA },
+    "disk-size"       => { CONTENT => PCDATA },
+    "env"             => { CONTENT => PCDATA },
+    "http-method"     => { CONTENT => PCDATA },
+    "location"        => { CONTENT => PCDATA },
+    "major-device"    => { CONTENT => PCDATA },
+    "minor-device"    => { CONTENT => PCDATA },
+    "modify-time"     => { CONTENT => PCDATA },
+    "name"            => { CONTENT => PCDATA },
+    "netmask"         => { CONTENT => PCDATA },
+    "number"          => { CONTENT => PCDATA },
+    "oid"             => { CONTENT => PCDATA },
+    "path"            => { CONTENT => PCDATA },
+    "permission"      => { CONTENT => PCDATA },
+    "pid"             => { CONTENT => PCDATA },
+    "port"            => { CONTENT => PCDATA },
+    "portlist"        => { CONTENT => PCDATA },
+    "program"         => { CONTENT => PCDATA },
+    "protocol"        => { CONTENT => PCDATA },
+    "size"            => { CONTENT => PCDATA },
+    "url"             => { CONTENT => PCDATA },
+
+    #
+    # Not defined in IDMEF DTD
+    #
+
+    "securityName"    => { CONTENT => PCDATA },
+    "contextName"     => { CONTENT => PCDATA },
+    "contextEngineID" => { CONTENT => PCDATA },
 };
 
 
-#
-# INTERNAL IDMEF STRUCTURES
-#
+
+
+##--------------------------------------------------------------------------------
+##
+##
+## CLASS METHODS:
+## --------------
+##
+##
+##--------------------------------------------------------------------------------
+
+
+
+
+##================================================================================
+##
+## XML PSEUDO DTD LOADER
+##
+##================================================================================
+##
+##  Below is the generic code for loading a pseudo DTD representation of an XML
+##  DTD into structures optimised for internal usage.
+##
+
+
 
 # $EXPAND_PATH is a hash table linking an idmef tag path to the corresponding list
-# of arguments needed to add a value at this path with add_in_simplehash.
+# of arguments needed to add a value at this path with the add() call.
 # each key is a tagpath to a given IDMEF field, as given to the 'add()' call.
 # each corresponding value is an array containing the list of tags in the
-# tagpath, preceded by 2 integers. The first one is 'A' if the pointed field is
-# an attribute, 'T' if it is a tag, 'N' if it is a node. The second one is always
-# set to 0. It is the index of the currently examined field in the tag path
-# used internally by add_in_simplehash.
+# tagpath, preceded by 2 values. The first one is 'A' if the pointed field is
+# an attribute, 'C' if it is a content, 'N' if it is just a node. Notice that
+# a C path is a N path.
 # ex:
-#    'AlertTargetUserUserIdident'  => [ A, 0, "Alert", "Target", "User", "UserId", "ident"],
-#    'AlertTargetUserUserIdtype'   => [ A, 0, "Alert", "Target", "User", "UserId", "type"],
-#    'AlertTargetUserUserIdname'   => [ T, 0, "Alert", "Target", "User", "UserId", "name"],
-#    'AlertTargetUserUserIdnumber' => [ T, 0, "Alert", "Target", "User", "UserId", "number"],
-#    'AlertTargetUserUserId'       => [ N, 0, "Alert", "Target", "User", "UserId"],
+#    'AlertTargetUserUserIdident'  => [ A, "Alert", "Target", "User", "UserId", "ident"],
+#    'AlertTargetUserUserIdtype'   => [ A, "Alert", "Target", "User", "UserId", "type"],
+#    'AlertTargetUserUserIdname'   => [ C, "Alert", "Target", "User", "UserId", "name"],
+#    'AlertTargetUserUserIdnumber' => [ C, "Alert", "Target", "User", "UserId", "number"],
+#    'AlertTargetUserUserId'       => [ N, "Alert", "Target", "User", "UserId"],
 
 my $EXPAND_PATH = {};
 
@@ -483,138 +552,57 @@ my $CHECK_VALUE = {};
 # a counter used by create_ident's unique id generator
 #
 
-my $idnum = 0;
+my $ID_COUNT = 0;
 
 
 
 
 
+#
+# Internal variables describing the DTD in use 
+# --------------------------------------------
+#
+# This variables are to be initiated by a serie
+# of api calls, listed below.
 
-##================================================================================
-##
-## XML CLASS LOADER
-##
-##================================================================================
-##
-##  Below is the generic code for loading a class based representation of an XML
-##  DTD into structures optimised for internal usage (EXPAN_PATH & CHECK_VALUE)
-##
+my $DTD = undef;
+my $ROOT = undef;
 
 
-# extend_subclass(<class>, <subclass>)
-#   take a class and its subclass and add to the subclass all
-#   the nodes, tags and attributes of the mother class.
-#   used by load_xml_dtd()
+#
+# xml declaration
 #
 
-sub extend_subclass {
-    my ($class, $subclass) = @_;
-
-    $subclass->{TAGS} = [] if (!exists($subclass->{TAGS}));
-    $subclass->{TAGS} = [@{$subclass->{TAGS}}, @{$class->{TAGS}}] if (exists($class->{TAGS}));
-
-    $subclass->{NODES} = [] if (!exists($subclass->{NODES}));
-    $subclass->{NODES} = [@{$subclass->{NODES}}, @{$class->{NODES}}] if (exists($class->{NODES}));    
-
-    $subclass->{MULTI} = [] if (!exists($subclass->{MULTI}));
-    $subclass->{MULTI} = [@{$subclass->{MULTI}}, @{$class->{MULTI}}] if (exists($class->{MULTI}));
-
-    $subclass->{ATTRIBUTES} = {} if (!exists($subclass->{ATTRIBUTES}));
-    if (exists($class->{ATTRIBUTES})) {
-	foreach my $k (keys(%{$class->{ATTRIBUTES}})) {
-	    $subclass->{ATTRIBUTES}->{$k} = $class->{ATTRIBUTES}->{$k};
-	}
-    }
-}
+my $XML_DECL_VER = "1.0";
+my $XML_DECL_ENC = "UTF-8";
 
 
-
-#----------------------------------------------------------------------------------------
 #
-# load_xml_dtd(<DTD>, <ROOT_CLASS>, ...)
-#
-# ARGS:
-#   <DTD>         a DTD hash
-#   <ROOT_CLASS>  the name (string) of the DTD's root class
-#
-# RETURN:
-#  This is the DTD parser used to load the IDMEF DTD in the DTD
-#  engine at startup.
-#  This function parses the DTD class hierarchy as defined
-#  through the <DTD> hash and build the xml class tree of
-#  the root node <ROOT_CLASS>. 
-#  It simultaneously fill the EXPAND_PATH and CHECK_VALUE 
-#  hashes used by 'add()' calls.
-#
-# EX:
-#    # load the IDMEF DTD at startup
-#    load_xml_dtd($IDMEF_DTD, "Alert");
-#    load_xml_dtd($IDMEF_DTD, "Heartbeat");
+# IDMEF DTD declaration
 #
 
-sub load_xml_dtd {
-    my ($dtd, $node, $nodename, @path, $attrib, $v, $k, $key, $attname, @list, $size_list, $n, $tag, $class);
-    ($dtd, $nodename, @path) = @_;
-    
-    push @path, $nodename;
-    $node = $dtd->{$nodename};
-
-    # add attributes to EXPAND_PATH & CHECK_VALUE    
-    if (exists($node->{ATTRIBUTES})) {
-	$attrib = $node->{ATTRIBUTES};
-
-	foreach $attname ( keys(%{$attrib}) ) {
-	    $k = join '', @path, $attname;
-	    $v = [ 'A', 0, @path, $attname ];
-	    $EXPAND_PATH->{$k} = $v;
-	    
-	    @list = @{$attrib->{$attname}};
-	    $size_list = @list;
-	    $CHECK_VALUE->{$k} = [ @list ] if ($size_list > 0);
-	}
-    }
-
-    # add tags to EXPAND_PATH & CHECK_VALUE    
-    if (exists($node->{TAGS})) {
-	foreach $tag (@{$node->{TAGS}}) {
-	    $k = join '', @path;
-	    $k = $k.$tag if ($tag ne CONTENTKEY);
-	    $v = [ 'T', 0, @path, $tag ];
-	    $EXPAND_PATH->{$k} = $v;
-	}
-    }
-    # rem: contentkey should overwrite the path tag of its father node
-
-    # call class parser recursively on each node
-    if (exists($node->{NODES})) {
-	foreach $key (@{$node->{NODES}}) {
-	    croak "IDMEF.pm - Class loader: $k in node $nodename is not a known class.\n" 
-		if (!exists($dtd->{$key}));
-	    $k = join '', @path, $key;
-	    $EXPAND_PATH->{$k} = [ 'N', 0, @path, $key ];
-	    load_xml_dtd($dtd, $key, @path);
-	}
-    }
-
-    # now take care of subclasses...
-    if (exists($node->{SUBCLASS})) {
-	pop @path;
-	foreach $key (@{$node->{SUBCLASS}}) {
-	    croak "IDMEF.pm - Class loader: subclass $k in node $node->{CLASSNAME} is not a known class (IDMEF v$IDMEF_VERSION).\n" 
-		if (!exists($dtd->{$key}));
-	    extend_subclass($node, $dtd->{$key});
-	    $k = join '', @path, $key;
-	    $EXPAND_PATH->{$k} = [ 'N', 0, @path, $key ];
-	    load_xml_dtd($dtd, $key, @path);
-	}
-    }
-}
+my $DOCTYPE_NAME  = "IDMEF-Message";
+my $DOCTYPE_SYSID = "idmef-message.dtd";
+my $DOCTYPE_PUBID = "-//IETF//DTD RFC XXXX IDMEF v1.0//EN";
 
 
 
 ##----------------------------------------------------------------------------------------
 ##
-## extend_idmef($DTD_extension, "new_root_class")
+## set_doctype_name(<string>)
+## set_doctype_sysid(<string>)
+## set_doctype_pubid(<string>)
+##
+
+sub set_doctype_name  { $DOCTYPE_NAME = shift; }
+sub set_doctype_sysid { $DOCTYPE_SYSID = shift; }
+sub set_doctype_pubid { $DOCTYPE_PUBID = shift; }
+
+
+
+##----------------------------------------------------------------------------------------
+##
+## extend_dtd($DTD_extension, "new_root_class")
 ##
 ## ARGS:
 ##   $DTD_extension    a DTD hash, as described in the source doc above.
@@ -630,9 +618,14 @@ sub load_xml_dtd {
 ##  From now on, the usual IDMEF calls ('in', 'add', 'to_hash'...) can be
 ##  used to create/parse extended messages as well. 
 ##
+##  To extend IDMEF, use extend_dtd(<hash_containing_new_idmef_node+replacement_nodes>, "IDMEF-Message")
+##  To load a new DTD, extend_dtd(<new hash>, "new root") + call set_doctype_*
+##
 
-sub extend_idmef {
+sub extend_dtd {
     my($dtd, $name) = @_;
+
+    $name = "IDMEF-Message" if (!defined($name));
     
     foreach my $k (keys(%{$dtd})) {
 	$IDMEF_DTD->{$k} = $dtd->{$k};
@@ -640,6 +633,153 @@ sub extend_idmef {
 
     load_xml_dtd($IDMEF_DTD, $name);
 }
+
+
+
+##----------------------------------------------------------------------------------------
+##
+## load_xml_dtd(<DTD>, <ROOT_CLASS>)
+##
+## ARGS:
+##   <DTD>         a DTD hash
+##   <ROOT_CLASS>  the name (string) of the DTD's root class
+##
+## RETURN:
+##  This is the DTD parser used to load the IDMEF DTD in the DTD
+##  engine at startup.
+##  This function parses the DTD entity list as defined
+##  through the <DTD> hash and builds the xml class tree of
+##  the root node <ROOT_CLASS>. 
+##
+## EX:
+##    # load the IDMEF DTD at startup
+##    load_xml_dtd($IDMEF_DTD, "IDMEF-Message");
+##
+
+sub load_xml_dtd {
+    my($dtd, $root) = @_;
+
+    defined($dtd)
+	|| croak "XML::IDMEF - load_xml_dtd: received a null ref in place of DTD hash.";
+    defined($root)
+	|| croak "XML::IDMEF - load_xml_dtd: received a null ref in place of DTD root name.";
+    exists($dtd->{$root})
+	|| croak "XML::IDMEF - load_xml_dtd: the root entity \'$root\' is not defined in the DTD hash.";
+
+    my $err = check_xml_dtd($dtd, $root);
+    croak "XML::IDMEF - load_xml_dtd: $err errors in the pseudo DTD. dying."
+	if ($err > 0);
+
+    # everything fine, accept DTD
+    $DTD = $dtd;
+    $ROOT = $root;
+    
+    fill_internal_hashes($DTD, "1".$ROOT);
+
+    return 0;
+}
+
+
+
+#----------------------------------------------------------------------------------------
+# 
+# fill_internal_hashes(<DTD>, <ENTITY_NAME> [, @path])
+#
+# build the EXPAND_PATH and CHECK_VALUE hashes.
+# it works recursively, and @path is the path of tags
+# of where we currently are in the xml tree.
+#
+
+sub fill_internal_hashes {
+    my($dtd, $name, @path) = @_;
+    my($node, $k, $v, $type, $att, $kid, $vals);
+
+    $node = $dtd->{substr($name,1)};
+    $k = join '', map({substr $_, 1} @path, $name);
+
+    # add node too EXPAND_PATH, as a node or content
+    if (exists($node->{CONTENT})) {
+	$EXPAND_PATH->{$k} = ['C', @path, $name];
+    } else {
+	$EXPAND_PATH->{$k} = ['N', @path, $name]; 
+    }
+
+    # does it have attributes? if so, add them.
+    if (exists($node->{ATTRIBUTES})) {
+	foreach $att (keys %{$node->{ATTRIBUTES}}) {
+	    $EXPAND_PATH->{$k.$att} = ['A', @path, $name, $att];
+	    
+	    # fill CHECK_VALUE hash
+	    $vals = $node->{ATTRIBUTES}->{$att};
+	    $CHECK_VALUE->{$k.$att} = $vals
+		if ((scalar @{$vals}) > 0);
+	}
+    }
+
+    # does it have children elements? if so, add them.
+    if (exists($node->{CHILDREN})) {
+	foreach $kid (@{$node->{CHILDREN}}) {
+	    fill_internal_hashes($dtd, $kid, @path, $name);
+	}
+    }
+
+    return 0;
+}
+
+
+
+#----------------------------------------------------------------------------------------
+#
+# check_xml_dtd(<DTD>, <ENTITY_NAME>)
+#
+# internal function, called by load_xml_dtd to validate the pseudo DTD's
+# syntax. recursive function. log errors to stdout.
+# 
+# return 0 if no error found, a positive number (error count) if errors found.
+# If error found, the module should croak.
+#
+
+sub check_xml_dtd {
+    my($dtd, $name) = @_;
+    my($ent, $code, $child);
+    my $ret = 0;
+
+    # check if entity is defined in pseudo-dtd
+    if (!exists($dtd->{$name})) {
+	print "XML::IDMEF - check_xml_dtd: entity \'$name\' is not defined in the pseudo DTD.\n";
+	return 1;
+    }
+
+    $ent = $dtd->{$name};
+
+    # check entity content code
+    if (exists($ent->{CONTENT})) {
+	$code = $ent->{CONTENT};
+	if ($code ne PCDATA && $code ne ANY && $code ne EMPTY) {
+	    print "XML::IDMEF - check_xml_dtd: entity \'$name\' does not have a valid content.\n";
+	    $ret++;
+	}
+    }
+
+    # check each child of this entity
+    if (exists($ent->{CHILDREN})) {
+	$code = $ent->{CHILDREN};
+	foreach $child (@{$code}) {
+	    
+	    # check that children starts with occurence code
+	    if (index("?*+1#", substr($child,0,1)) == -1) {
+		print "XML::IDMEF - check_xml_dtd: children \'$child\' of entity \'$name\' does not have a proper occurence code.\n";
+		$ret++;
+	    } else {
+		# check children's validity
+		$ret += check_xml_dtd($dtd, substr($child,1));
+	    }
+	}
+    }
+    
+    return $ret;
+}
+
 
 
 ##--------------------------------------------------------------------------------
@@ -652,8 +792,9 @@ sub extend_idmef {
 #    load the IDMEF root classes: Alert & Heartbeat, and build the intermediary 
 #    structures representing the DTD (EXPAND_PATH & CHECK_VALUE) used by API calls
 #    such as add(). 
-load_xml_dtd($IDMEF_DTD, "Alert");
-load_xml_dtd($IDMEF_DTD, "Heartbeat");
+load_xml_dtd($IDMEF_DTD, "IDMEF-Message");
+
+
 
 # return true to package loader
 1;
@@ -662,139 +803,14 @@ load_xml_dtd($IDMEF_DTD, "Heartbeat");
 
 
 
-
-
-
-
-
-
-
-##=========================================================================================
-##
-##  MODULE FUNCTIONS 
-##
-##=========================================================================================
-##
-##
-## EXPORTED FUNCTIONS:
-## -------------------
-##
-
-
-
-##----------------------------------------------------------------------------------------
-##
-## <byte_string> = byte_to_string(<bytes>)
-##
-## ARGS:
-##   <bytes>    a binary string
-##
-## RETURN:
-##   <byte_string>: the string obtained by converting <bytes> into its IDMEF representation,
-##   refered to as type BYTE[] in the IDMEF rfc.
-##
-
-sub byte_to_string {
-    return join '', map( { "&\#$_;" } unpack("C*", $_[0]) ); 
-}
-
-
-
-##----------------------------------------------------------------------------------------
-##
-## <xmlstring> = xml_encode(<string>)
-##
-## ARGS:
-##   <string>   a usual string
-##
-## RETURN:
-##   <xmlstring>: the xml encoded string equivalent to <string>. 
-##
-## DESC:
-##   You don't need this function if you are using add() calls (which already calls it).
-##   To convert a string into an idmef STRING, xml_encode basically replaces
-##   characters:         with:
-##         &                 &amp;
-##         <                 &lt;
-##         >                 &gt;
-##         "                 &quot;
-##         '                 &apos;
-##   and all non printable characters (ie charcodes >126 or <32 except 10) into
-##   the corresponding &#x00XX; form.
-##
-
-# create a lookup array, start with filling it with xml encoded chars 
-my @xml_enc = map { sprintf("&\#x00%.2x;", $_) } 0..255;
-    
-# map the printable characters to themselves
-# NOTE: XML standard says encode all chars < 32 except 10, and all > 126 
-for (10,32..126) {
-    $xml_enc[$_] = chr($_);
-}
-
-# the special xml characters maps to their own encodings
-$xml_enc[ord('&')]  = "&amp;";
-$xml_enc[ord('<')]  = "&lt;";
-$xml_enc[ord('>')]  = "&gt;";
-$xml_enc[ord('"')]  = "&quot;";
-$xml_enc[ord('\'')] = "&apos;";
-
-sub xml_encode {
-    my ($st) = @_;
-    return join('', map { $xml_enc[ord($_)]} ($st =~ /(.)/gs));
-}
-
-
-
-##----------------------------------------------------------------------------------------
-##
-## <string> = xml_decode(<xmlstring>)
-##
-## ARGS:
-##   <xmlstring>  a xml encoded IDMEF STRING
-##
-## RETURN:
-##   <string>     the corresponding decoded string
-##
-## DESC:
-##   You don't need this function with 'to_hash' (which already calls it).
-##   It decodes <xmlstring> into a string, ie replace the following
-##   characters:         with:
-##         &amp;              &
-##         &lt;               <
-##         &gt;               >
-##         &quot              "
-##         &apos              '
-##         &#XX;              XX in base 10
-##         &#xXXXX;           XXXX in base 16
-##   It also decodes strings encoded with 'byte_to_string'
-##
-
-sub xml_decode {
-    my ($st) = @_;
-
-    if (defined $st) {
-	
-	$st =~ s/&amp\;/&/gs;
-	$st =~ s/&lt\;/</gs;
-	$st =~ s/&gt\;/>/gs;
-	$st =~ s/&quot\;/\"/gs;
-	$st =~ s/&apos\;/\'/gs;
-	
-	$st =~ s/&\#x(.{4});/chr(hex $1)/ges;
-	$st =~ s/&\#(.{2,3});/chr($1)/ges;
-    }
-
-    return $st;
-}
-
-
-
+##--------------------------------------------------------------------------------
 ##
 ##
 ## OBJECT METHODS:
 ## ---------------
 ##
+##
+##--------------------------------------------------------------------------------
 
 
 
@@ -803,18 +819,35 @@ sub xml_decode {
 ## new IDMEF()
 ##
 ## RETURN
-##   a new empty IDMEF message
+##   a new empty IDMEF message, with initiated doctype and xml declaration
+##   as well as root element and IDMEF version tag.
 ##
 ## DESC
-##   create a new empty idmef message, and return the hash structure containing it.
-##   wrapper to a in("") call.
+##   create a new empty idmef message
 ##
 ## EXAMPLES:
 ##   $idmef = new XML::IDMEF();
 ##
 
 sub new {
-    return(in(""));
+    my($idmef, $doc, $x);
+
+    $idmef = {};
+    bless($idmef, "XML::IDMEF");
+
+    $doc = new XML::DOM::Document();
+
+    $x = $doc->createDocumentType($DOCTYPE_NAME, $DOCTYPE_SYSID, $DOCTYPE_PUBID); 
+    $doc->setDoctype($x);
+    
+    $x = $doc->createXMLDecl($XML_DECL_VER, $XML_DECL_ENC);
+    $doc->setXMLDecl($x);
+    
+    $idmef->{"DOM"} = $doc;
+
+#    $idmef->add("", $IDMEF_VERSION);
+
+    return $idmef;
 }
 
 
@@ -832,7 +865,9 @@ sub new {
 ##
 ## DESC:
 ##   loads an idmef message into an IDMEF container (a hash with XML::Simple syntax)
-##   the input can either be a string, a file or an empty string.
+##   the input can either be a string, a file or an empty string. if the parsed IDMEF
+##   message does not include an XML or DOCTYPE declaration, it will be added, assuming
+##   IDMEF v1.0 as the default.
 ##
 ## EXAMPLES:
 ##   my $idmef = (new XML::IDMEF)->in("/home/user/idmef.xml");
@@ -840,17 +875,37 @@ sub new {
 ##
 
 sub in {
-    #remove keeproot if there is a higher tag than Alert (<idmef...>)
     my($idmef, $arg) = @_;
+    my($doc, $parser, $x);
 
-    $arg = "" if (!defined($arg));
+    # if no param, create empty XML::IDMEF doc
+    return new XML::IDMEF if (!defined($idmef));
+    return new XML::IDMEF if (!defined($arg));
 
-    # if got empty string, create a new empty idmef, otherwise load/parse it
-    $arg = EMPTYIDMEF if ($arg eq "");
-
-    $idmef = XMLin($arg, keyattr=>[], forcearray=>1, keeproot=>0, contentkey=>CONTENTKEY);
+    # parse IDMEF string or file
+    $parser = XML::DOM::Parser->new;
     
-    bless($idmef, "XML::IDMEF");
+    # is $arg an idmef string or a filepath? test if it starts with <
+    $arg =~ / *(.)/;
+    if ($1 eq "<") {
+	$doc = $parser->parse($arg);
+    } else {	
+	$doc = $parser->parsefile($arg);
+    }
+
+    # check that the document has a DOCTYPE and an XML declaration
+    if (!defined($doc->getDoctype())) {
+	$x = $doc->createDocumentType($DOCTYPE_NAME, $DOCTYPE_SYSID, $DOCTYPE_PUBID); 
+	$doc->setDoctype($x);
+    }	
+    
+    if (!defined($doc->getXMLDecl())) {
+	$x = $doc->createXMLDecl($XML_DECL_VER, $XML_DECL_ENC);
+	$doc->setXMLDecl($x);
+    }
+
+    $idmef->{"DOM"} = $doc;
+
     return $idmef;
 }
 
@@ -861,7 +916,7 @@ sub in {
 ## out(<hash>)
 ##
 ## ARGS:
-##   <hash>  hash containing an IDMEF message in XML::Simple representation
+##   <hash>  an XML::IDMEF object
 ##
 ## RETURN:
 ##   a string containing the corresponding IDMEF message
@@ -871,25 +926,37 @@ sub in {
 ##
 
 sub out {
-    my($idmef, $simple, $key, $out);
-    $idmef = shift;
+    my $idmef = shift;
+    return $idmef->{"DOM"}->toString;
+}
 
-    # bad hack: could not 're-bless' $idmef to 'XML::Simple', so build a new and copy
-    $simple = XMLin("<IDMEF-Message></IDMEF-Message>", keyattr=>[], forcearray=>1, keeproot=>0,
-		    contentkey=>CONTENTKEY);
-    foreach $key (keys(%{$idmef})) {
-	$simple->{$key} = $idmef->{$key};	
-    }
 
-    #TODO: insert here code checking $idmef against IDMEF DTD
 
-    $out = XMLout($simple, rootname=>'IDMEF-Message', contentkey=>CONTENTKEY);
+##----------------------------------------------------------------------------------------
+##
+## get_root(<idmef>)
+##
+## ARGS:
+##   <idmef>  an XML::IDMEF object
+##
+## RETURN:
+##   a string representing the name of the root element of the IDMEF message,
+##   normally "IDMEF-Message", or undef if no root element defined.
+##
+## EXAMPLES:
+##   $idmef = new XML::IDMEF();
+##   $idmef->add("Alertimpact", "7");
+##   $root = $idmef->get_root();   # $type now contains the string "IDMEF-Message"   
+##
 
-    # bad hack: Simple does not replace &<>"' correctly, nor does it handle &#....;,
-    # so we have to clean after:
-    $out =~ s/&amp;/&/gs;
+sub get_root {
+    my $idmef = shift;
+    
+    my $c = $idmef->{"DOM"}->getDocumentElement();
+    return $c->getTagName()
+	if (defined($c));
 
-    return $out;
+    return undef;
 }
 
 
@@ -899,7 +966,7 @@ sub out {
 ## get_type(<hash>)
 ##
 ## ARGS:
-##   <hash>  hash containing an IDMEF message in XML::Simple representation
+##   <idmef>  an XML::IDMEF object
 ##
 ## RETURN:
 ##   a string representing the type of IDMEF message ("Alert", "Heartbeat"...)
@@ -914,9 +981,15 @@ sub out {
 sub get_type {
     my $idmef = shift;
     
-    foreach my $k (keys %{$idmef}) {
-	return $k if ($k ne "version");
+    my $c = $idmef->{"DOM"}->getDocumentElement();
+    return undef
+	if (!defined($c));
+
+    foreach my $n ($c->getChildNodes()) {
+	return $n->getTagName()
+	    if ($n->getNodeType() == ELEMENT_NODE);
     }
+
     return undef;
 }
 
@@ -924,306 +997,81 @@ sub get_type {
 
 ##----------------------------------------------------------------------------------------
 ##
-## to_hash(<hash>)
-##
+## contains(<idmef>, <tagpath>)
+## 
 ## ARGS:
-##   <hash>  hash containing an IDMEF message in XML::Simple representation
-##
-## RETURN:
-##   a hash enumerating all the contents and attributes of this IDMEF message.
-##   each key is a concatenated sequence of tags leading to the content/attribute,
-##   and the corresponding value is the content/attribute itself.
-##   all IDMEF contents and values are converted from IDMEF format (STRING or BYTE)
-##   back to the original ascii string.
-##
-## EXAMPLES:
-##
-## <IDMEF-message version="0.5">
-##  <Alert ident="myalertidentity">
-##    <Target>
-##      <Node category="dns">
-##        <name>node2</name>
-##      </Node>
-##    </Target>
-##    <AdditionalData meaning="datatype1">data1</AdditionalData>
-##    <AdditionalData meaning="datatype2">data2</AdditionalData>
-##  </Alert>
-## </IDMEF-message>
-##
-## becomes:
-##
-## { "version"                    => [ "0.5" ],
-##   "Alertident"                 => [ "myalertidentity" ],
-##   "AlertTargetNodecategory"    => [ "dns" ],
-##   "AlertTargetNodename"        => [ "node2" ],
-##   "AlertAdditionalDatameaning" => [ "datatype1", "datatype2" ],   #meaning & contents are
-##   "AlertAdditionalData"        => [ "type1", "type2" ],           #listed in same order
-## }
-##
-##
-
-sub to_hash {
-    my $idmef = shift;
-    my $result = {};
-    my $path = [];
-
-    simplehashtohash($idmef, $path, $result);
-    return $result;
-}
-
-
-# recursive functions called by to_hash
-# goes through the XML::Simple hash tree representing the IDMEF message
-# and build a hash of keys as returned by to_hash
-
-sub simplehashtohash {
-    my($hash, $path, $result) = @_;
-    my($key, $node);
-
-    foreach $key (keys %{$hash})
-    {
-	push @{$path}, $key if ($key ne CONTENTKEY);
-		  
-	if (ref($hash->{$key}) eq "ARRAY")
-	{
-	    # this is an array of sub-nodes. let's loop through it.
-	    foreach $node (@{$hash->{$key}}) {
-		
-		if (ref($node) eq "HASH") {
-		    simplehashtohash($node, $path, $result);
-		} else {
-		    add_pathkey_in_result($result, $path, $node);
-		}
-	    }
-	}
-	else
-	{
-	    # we reached a key->value pair. put it in $result
-	    add_pathkey_in_result($result, $path, $hash->{$key});
-	}
-
-	pop @{$path} if ($key ne CONTENTKEY);
-    }
-}
-
-
-# take $result, $path, $key and add join($path)->"$key" to $result
-
-sub add_pathkey_in_result {
-    my($result, $path, $key) = @_;
-    my $tagpath = join '', @{$path};
-
-    $key = xml_decode($key);
-
-    if (exists($result->{$tagpath})) {
-	push @{$result->{$tagpath}}, $key;
-    } else {
-	$result->{$tagpath} = [ $key ];
-    }
-}
-
-
-
-#----------------------------------------------------------------------------------------
-#
-# add_in_simplehash(hash, hash2, type, index, tag1, tag2, ..., tagN-1, tagN);
-#
-# ARGS:
-#   hash:          hash containing an XML message in XML::Simple representation
-#   hash2:         the same hash. required by function's internals.
-#   type:          type of field being inserted: 'T' for a tag, 'N' for a node
-#                  and 'A' for an attribute
-#   index:         index of the tag being analyzed at this level of recurrence
-#                  should be 0 when calling add_in_simplehash from another function.
-#   tag1...tagN-1: strings representing nested IDMEF tags
-#   tagN-1:        if tagN is a content of tag tagN-2, tagN-1 should be the
-#                  keyword CONTENTKEY
-#   tagN:          value of content or attribute
-#
-# RETURN: 
-#   1 if the key was inserted, 0 otherwise
-#
-# DESC:
-#   Don't use this functions, use add(...) instead.
-#   Function performs basic checks and dies if it reaches an impossible
-#   state.
-#   It recursively searches the IDMEF tree contained by 'hash' to find where
-#   to add the given key.
-#   Special treatment for AdditionalData nodes: instead of looking through all
-#   AdditionalData nodes available, just look at the last one
-#
-
-sub add_in_simplehash {
-    my ($roothash, $hash, $type, $index, @path, $path_size, $field, @nodes);
-
-    ($roothash, $hash, $type, $index, @path) = @_;
-    $path_size  = @path;
-    $field      = $path[$index];
-
-    croak "add_in_simplehash: got no path" if ($path_size == 0);
-    croak "add_in_simplehash: got index larger than path " if ($index > $path_size);
-    croak "add_in_simplehash: can't add a unique key $path[0] which is not a node" 
-	if ( ($path_size == 1) && ($type ne 'N') );
-    
-    $path_size-- if ($type ne 'N');    
-
-    # have we reached the last field in path.
-    if ($index == $path_size-1)
-    {
-	# check if field exists in hash
-	if (exists($hash->{$field})) {
-
-	    # field exist. can it exist in multiple number?
-	    if (!is_multiple($path[$index-1], $field)) {
-		# field can exist only once in this node, and it has already been
-		# created: need to find the closest higher node that can be multiple,
-		# duplicate it and drop our key there
-		
-		while ($index > 0) {
-		    $index--;
-		    if (is_multiple($path[$index-1], $path[$index])) {
-			
-			# create a new node of $path[$index]
-			add_in_simplehash($roothash, $roothash, 'N', 0, @path[0..$index]);
-			
-			# restart the key insertion process.
-			# NOTE: this works ONLY because simplehash_add_key inserts
-			# a new node/tag in first position in the hash, so that a new
-			# recursive search will catch the new node at first
-			# we hence don't need to loop among all nodes and go through the whole tree
-			return add_in_simplehash($roothash, $roothash, $type, 0, @path);
-		    }
-		}
-		
-		# we did not find any father node that can occur multiple times
-		# so this tag/node is not supposed to be multiple
-		croak "add_in_simple_hash: Can't add field \"$field\".".
-		    " It already exists and can't be multiple.".
-		    " (".join("/", splice(@path, 0, $#path))." = ".$path[-1].")";
-	    }
-	    
-	    # here: the field already exists, but is multiple. 
-	    # let's just go on and set its value 
-	}
-
-	# we have reach the last tag in tagpath.
-	# now we should add its value and return.
-	if ($type eq 'N') {
-	    simplehash_add_key($hash, $type, $field);
-	} else {
-	    simplehash_add_key($hash, $type, $field, $path[$index+1]);
-	}
-	return 1;
-    }
-
-    # we have not yet reached the last field. let's open or create a node
-
-    # create a node if it does not exist
-    simplehash_add_key($hash, 'N', $field) if (!exists($hash->{$field}));
-
-    # take the first instance of this node, and continue in it
-    return add_in_simplehash($roothash, $hash->{$field}->[0], $type, $index+1, @path);
-}
-    
-    
-
-# simplehash_add_key($hash, $type, $key, $value);
-#   add key=>value to $hash depending on whether $value
-#   is a tag, content or attribut ($type)
-#   to add a node, just do ...add_key($hash, $type, $key)
-#   (key = nodename)
-
-sub simplehash_add_key {
-    my ($hash, $type, $key, $val) = @_;
-
-    # add NODE
-    if ($type eq 'N')
-    {
-	if (exists($hash->{$key})) {
-	    # add an empty node to the node list, IN FIRST POSITION 
-	    # (1st position required by add() algorithm)
-	    # this handles nodes that occur multiple times
-	    $hash->{$key} = [ {}, @{$hash->{$key}} ];
-	} else {
-	    # create an empty node
-	    $hash->{$key} = [{}];
-	}
-    }
-    # add ATTRIBUTE
-    elsif ($type eq 'A')
-    {
-	# create an attribute hask key
-	$hash->{$key} = $val;
-    }
-    # add TAG
-    elsif ($type eq 'T')
-    {
-	if ($key eq CONTENTKEY)	{
-	    # in XML::Simple hash, the CONTENTKEY tag is actually an attribute
-	    $hash->{$key} = $val;
-	} else {    
-	    if (exists($hash->{$key})) {
-		# tag array exist. add it a value
-		push @{$hash->{$key}}, $val;
-	    } else {
-		# create tag array with 1 value
-		$hash->{$key} = [$val];
-	    }
-	}
-    }
-}
-
-
-
-##----------------------------------------------------------------------------------------
-##	    
-## is_multiple($rootnode, $node)
-##
-## ARGS:
-##   rootnode:      an IDMEF node name
-##   node:          an IDMEF node name
+##   idmef:    a hash representation of an IDMEF message, as received from new or in
+##   tagpath:  a string obtained by concatenating the names of the nested tags, from the
+##             Alert tag down to the closest tag to value.
 ##
 ## RETURN: 
-##   1 if node can occur multiple times in rootnode, 0 otherwise
-##
-## DESC:
-##   check is $node can occur multiple times in $rootnode
-##   according to the IDMEF DTD. return 1 if yes, 0 if no.
+##   1 if there is at least one value set to the particular tagpath.
+##   0 otherwise.
 ##
 
-sub is_multiple {
-    my ($class, $flag, $rootnode, $node, $k);
-    ($rootnode, $node) = @_;
+sub contains {
+    my($idmef, $path) = @_;
+    my($type, @tagpath, $dom, $att, $n);
 
-    $class = $IDMEF_DTD->{$rootnode};
+    $path = $ROOT.$path;
+    $dom = $idmef->{"DOM"}->getDocumentElement;
 
-    if (exists($class->{MULTI})) {
-	foreach $k (@{$class->{MULTI}}) {
-	    return 1 if ($k eq $node);
-	}
+    return 0 if (!defined $dom);
+
+    return 0 if (!exists($EXPAND_PATH->{$path}));
+
+    ($type, @tagpath) = @{$EXPAND_PATH->{$path}};
+
+    $att = pop @tagpath
+	if ($type eq 'A');
+
+    if ($type eq 'N' or $type eq 'C') {
+	defined(find_node($dom, @tagpath)) ? return 1 : return 0;
+
+    } elsif ($type eq 'A') {
+	$n = find_node($dom, @tagpath);
+	return 0 if (!defined($n));
+	($n->getAttribute($att) ne "") ? return 1 : return 0;
     }
-    return 0;
+
+    croak "contains: internal error. found element of type $type.";
 }
 
 
 
 #----------------------------------------------------------------------------------------
 #
-# check_allowed(path, key, list);
-#   check that key is one of elements of list
-#   returns 1 if ok, 0 if st1 is not in and
-#   send error
+# find_node($node, @tagpath)
+#
+# return the last node in @tagpath if @tagpath exists in $dom, 
+# return undef otherwise
+# @tagpath are the name of DOM::Elements inside $dom. no attribute.
+# tagpath starts at the root (IDMEF-Message)
+# if the tagpath occurs multiple times, return the first occurence of it.
+#
 
-sub check_allowed {
-    my ($path, $key, $v, @vals);
-    ($path, $key, @vals)= @_;
+sub find_node {
+    my($node, @tagpath) = @_;
+    my($name, $n, $m);
+    
+    $name = substr(shift(@tagpath), 1);
 
-    foreach $v (@vals) {
-	return 1 if ($v eq $key);
+    if ($node->getTagName() eq $name) {
+	
+	return $node
+	    if ((scalar @tagpath) == 0);
+	
+	foreach $n ($node->getChildNodes()) {
+	    if ($n->getNodeType() == ELEMENT_NODE) {
+		$m = find_node($n, @tagpath);	
+		if (defined($m)) {
+		    return $m;
+		}
+	    }
+	}	
     }
-
-    croak "add: $key is not an allowed value for $path (IDMEF v$IDMEF_VERSION).\n";
-    return 0;
+    
+    return undef;
 }
 
 
@@ -1240,7 +1088,8 @@ sub check_allowed {
 ##            given in tagpath
 ##
 ## RETURN:
-##   1 if the field was correctly added, 0 otherwise
+##   0 if the field was correctly added, and croak otherwise (if you did
+##   something that goes against the DTD).
 ##
 ## DESC:
 ##   Each IDMEF field of a given IDMEF message can be created through a corresponding add()
@@ -1320,116 +1169,482 @@ sub check_allowed {
 ##
 
 sub add {
-    my ($tag1, $tag2);
+    my ($tag, $root, $dom, $c);
     my ($idmef, $path, $value, @tail) = @_;
 
-    $value = xml_encode($value);
+    $path  = $ROOT.$path;
+    $dom   = $idmef->{"DOM"};
+    $root  = $dom->getDocumentElement;
+
+    # create a root element if none exists
+    if (!defined $root) {
+	$root = $dom->createElement($ROOT);
+	$dom->appendChild($root);
+    }
+
+    # is this a known tagpath?
+    if (!exists($EXPAND_PATH->{$path})) {
+	croak "add: $path is not a known IDMEF tag path (IDMEF v$IDMEF_VERSION).";
+    }
+
+    # if it is an attribute or a content, did we get a value?
+    $c = ${$EXPAND_PATH->{$path}}[0];
+    croak "add: $path is an attribute or a content and requires a value (which you did not give)."
+	if (($c eq 'A' or $c eq 'C') and !defined($value));
 
     # check if value is valid
     if (exists($CHECK_VALUE->{$path})) {
 	check_allowed($path, $value, @{$CHECK_VALUE->{$path}});
     }
 
-    # check if path valid and add key
-    if (exists($EXPAND_PATH->{$path})) {
+    # add key to path
+    $tag = @{$EXPAND_PATH->{$path}}[3];
+
+    # check if it is AdditionalData	
+    if (defined($tag) && substr($tag,1) eq "AdditionalData") {
 	
-	$tag1 = @{$EXPAND_PATH->{$path}}[2];
-	$tag2 = @{$EXPAND_PATH->{$path}}[3];  
-	
-	# check if it is AdditionalData	
-	if ($tag2 eq "AdditionalData") {
-
-	    if ($#tail == -1) {
-		return add_in_simplehash($idmef, $idmef, @{$EXPAND_PATH->{$path}}, $value);
-	    } elsif ($#tail == 0) {
-		add_in_simplehash($idmef, $idmef, @{$EXPAND_PATH->{$path}}, $value);
-	        add_in_simplehash($idmef, $idmef, @{$EXPAND_PATH->{$path."meaning"}}, xml_encode($tail[0]));
-		return add_in_simplehash($idmef, $idmef, @{$EXPAND_PATH->{$path."type"}}, "string");
-	    } elsif ($#tail == 1) {
-		check_allowed($path."type", xml_encode($tail[1]), @{$CHECK_VALUE->{$path."type"}});
-		add_in_simplehash($idmef, $idmef, @{$EXPAND_PATH->{$path}}, $value);
-		add_in_simplehash($idmef, $idmef, @{$EXPAND_PATH->{$path."meaning"}}, xml_encode($tail[0])); 	
-		return add_in_simplehash($idmef, $idmef, @{$EXPAND_PATH->{$path."type"}}, xml_encode($tail[1]));
-	    } else {
-		croak "add: wrong number of arguments given to add(\"$path\")";
-	    }
+	if (scalar(@tail) == 0) {
+	    add_in_dom($dom, $root, $path, $value);
+	} elsif (scalar(@tail) == 1) {
+	    add_in_dom($dom, $root, $path, $value);
+	    add_in_dom($dom, $root, $path."meaning", $tail[0]);
+	    add_in_dom($dom, $root, $path."type", "string");
+	} elsif (scalar(@tail) == 2) {
+	    check_allowed($path."type", $tail[1], @{$CHECK_VALUE->{$path."type"}});
+	    add_in_dom($dom, $root, $path, $value);
+	    add_in_dom($dom, $root, $path."meaning", $tail[0]); 	
+	    add_in_dom($dom, $root, $path."type", $tail[1]);
+	} else {
+	    croak "add: wrong number of arguments given to add(\"$path\")";
 	}
-	else
-	{
-	    if (defined $value) {
-		return add_in_simplehash($idmef, $idmef, @{$EXPAND_PATH->{$path}}, $value);
-	    } else {
-		return add_in_simplehash($idmef, $idmef, @{$EXPAND_PATH->{$path}});
-	    }
+    }
+    else
+    {
+	if (defined $value) {
+	    add_in_dom($dom, $root, $path, $value);
+	} else {
+	    add_in_dom($dom, $root, $path);
 	}
-    }    
+    }
 
-    croak "add: $path is not a known IDMEF tag path (IDMEF v$IDMEF_VERSION).\n";
-}
-
-
-
-##----------------------------------------------------------------------------------------
-##
-## contains(<idmef>, <tagpath>)
-## 
-## ARGS:
-##   idmef:    a hash representation of an IDMEF message, as received from new or in
-##   tagpath:  a string obtained by concatenating the names of the nested tags, from the
-##             Alert tag down to the closest tag to value.
-##
-## RETURN: 
-##   Non-zero if there is at least one value set to the particular tagpath.
-##   Otherwise zero.
-##
-
-# a non official name for contains, kept to maintain backward compatibility
-sub at_least_one {
-    return contains(@_);
-}
-
-sub contains {
-    my ($idmef, $tag) = @_;
-
-    return 0 if (!exists($EXPAND_PATH->{$tag}));
-
-    # now, follow in the idmef tree the path corresponding
-    # to $tag, until we either find the last tag or have searched
-    # the whole tree and not found the path
-    # this is a recursive algorithm
-    my $length = @{$EXPAND_PATH->{$tag}}-1;
-    return search_for_path($idmef, @{$EXPAND_PATH->{$tag}}[2..$length]);
+    return 0;
 }
 
 
 
 #----------------------------------------------------------------------------------------
 #
-# search_for_path($rootnode, @tagpath)
-#   a recursive algorithm going through the $rootnode tree, looking for 
-#   the $tagpath, until it either finds it (return 1), or has been through
-#   the whole tree without finding it (return 0)
-#   return: 1 if tagpath exists in $rootnode. 0 otherwise
+# add_in_dom($root, $tagpath [, $value])
+#
+# if their is a value, add this value to the tagpath, otherwise add the 
+# node pointed by tagpath. return the changed node.
+#
 
-sub search_for_path {
-    my($nodearray, $node, $size);
-    my($rootnode, @path) = @_;
+sub add_in_dom {
+    my($dom, $root, $path, $val) = @_;
+    my($type, @tagpath, $att, $node, $text, $n);
 
-    # if this node does contain closest field in tag path, return 0
-    return 0 if (!exists($rootnode->{$path[0]}));
+    # find the tagpath corresponding to $path
+    ($type, @tagpath) = @{$EXPAND_PATH->{$path}};
 
-    # check if we have reached an attribute, ie if path has only one element
-    # if it is the case, and since this tag exists (see above), return 1
-    return 1 if ($#path == 0);
+    if ($type eq 'N') {
+	# we want to add a node
+	$node = find_node($root, @tagpath);
+
+	if (defined $node) {
+	    return duplicate_node_path($dom, $root, @tagpath);
+	} else {
+	    return create_node_path($dom, $root, @tagpath);
+	}
+
+    } elsif ($type eq 'A') {
+	# we want to add an attribute
+	$att = pop @tagpath;
+	$node = find_node($root, @tagpath);
+
+	if (!defined $node) {
+	    $node = create_node_path($dom, $root, @tagpath);
+	} else {
+	    # if attribute already set, try to duplicate node
+	    if ($node->getAttribute($att) ne "") {
+		$node = duplicate_node_path($dom, $root, @tagpath);
+	    }
+	}
+
+	# add attribute
+	$node->setAttribute($att, $val);
+	return $node;
+
+    } elsif ($type eq 'C') {
+	# we want to add a content
+	$node = find_node($root, @tagpath);
+
+	# if node does not exists, create it
+	if (!defined $node) {
+	    $node = create_node_path($dom, $root, @tagpath);
+	}
+
 	
-    # we are looking at a node, so:
-    # go recursively through all the nodes/attributes in this node
-    # until it either find the searched path, or as been through all
-    $nodearray = $rootnode->{$path[0]};
-    foreach $node (@{$nodearray}) {
-	return 1 if (search_for_path($node, @path[1..$#path]));
-    }    
+	# find this node's Text node
+	foreach $n ($node->getChildNodes()) {
+	    if ($n->getNodeType() == TEXT_NODE) {
+		# node already has text child. duplicate node
+		$n = duplicate_node_path($dom, $root, @tagpath);
+		$node = $n;
+		last;
+	    }
+	}
+
+	# found a node that does not have any text element. create text.
+	$n = $dom->createTextNode($val);
+	$node->appendChild($n);
+	return $node;
+    }
+
+    croak "add_in_dom: internal error. found element of type $type.";
+}
+
+
+
+#----------------------------------------------------------------------------------------
+#
+# create_node_path($root, @tagpath)
+#
+# create all nodes in @tagpath, and return the last node in tagpath.
+# all nodes in @tagpath are elements. 
+# create_node assumes that $root is a non null element, which usually
+# implies that the idmef dom document should have a root.
+#
+
+sub create_node_path {
+    my($dom, $root, @tagpath) = @_;
+    @tagpath = map({substr($_,1)} @tagpath);
+    return create_node_internal($dom, $root, @tagpath);
+}
+
+sub create_node_internal {
+    my($dom, $node, @tagpath) = @_;
+    my($name_node, $name_next, @child_order, $i, $pos, $next_child, $pos2, $name, $new, @a, $n);
+
+    $name_node = shift @tagpath;
+    $name_next = shift @tagpath;
+
+    croak "create_node: got empty tagpath."
+	if (!defined $name_node);
+
+    return undef 
+	if ($node->getTagName() ne $name_node);
+
+    return $node
+	if (!defined $name_next);
+
+    # lookup children order for $name_node in DTD
+    @child_order = @{$DTD->{$name_node}->{CHILDREN}};
+    @child_order = map({substr $_, 1} @child_order);
+
+    # this expression finds the offset in @children of the last occurence of $name_next
+    for($pos=0, $i=0; $i < scalar(@child_order); $i++) {
+	$pos = $i if ($child_order[$i] eq $name_next);
+    }
+
+    # go through all children, and insert new node before first following kid
+    $next_child = undef;
+
+    foreach $n ($node->getChildNodes()) {
+
+	if ($n->getNodeType() == ELEMENT_NODE) {
+	    $name = $n->getTagName;
+	    
+	    # if we found the node we searched, loop in it
+	    if ($name eq $name_next) {
+		return create_node_internal($dom, $n, $name_next, @tagpath);
+	    }
+
+	    # check if we found a node that should occur after the one to be inserted
+	    # if so, break the loop and create a new node before it
+	    for($pos2=0, $i=0; $i < scalar(@child_order); $i++) {
+		if ($child_order[$i] eq $name) {
+		    $pos2 = $i;
+		    last;
+		}
+	    }
+
+	    if ($pos2 > $pos) {
+		$next_child = $n;
+		last;
+	    }
+	}
+    }
+
+    # create a new node and insert it at the right place
+    $new = $dom->createElement($name_next);
+    $node->insertBefore($new, $next_child);
+
+    return create_node_internal($dom, $new, $name_next, @tagpath);
+}
+
+
+
+#----------------------------------------------------------------------------------------
+#
+# duplicate_node_path($dom, $root, @tagpath)
+#
+# duplicate the last node in @tagpath, ie
+# find the closest parent to that node that accepts multiple occurences
+# of node path, create a new instance of the node, and call create_node 
+# to recreate all elements down to the node. return the duplicated node
+#
+
+sub duplicate_node_path {
+    my($dom, $root, @node_path) = @_;
+    my($name, $node, $new, $next, $array, @tail, $i, $c, @array);
+
+    # find the closest parent of last node, having multiple occurences
+    for ($i = (scalar @node_path) - 1; $i > 0; $i--) {
+	last if ($node_path[$i] =~ /^[\+\#\*]/);
+    }
+
+    croak "add - duplicate_node: could not duplicate node".(pop @node_path).". no duplicable parent."
+	if ($i == 0);
+    
+    # duplicate the node at $i-2 in @node_path
+    @tail = splice(@node_path, $i+1);
+    $name = pop @node_path;
+
+    # try to find the node to duplicate
+    $node = find_node($root, @node_path, $name) ||
+	croak "duplicate_node_path: did not find node to duplicate. impossible.";
+
+    # create new instance of 'name' and insert before $node
+    $new = $dom->createElement(substr($name, 1));
+    $node->getParentNode()->insertBefore($new, $node);
+
+    # build all node path in the original @node_path, and return the last
+    return create_node_path($dom, $root, @node_path, $name, @tail);
+}
+
+
+
+#----------------------------------------------------------------------------------------
+#
+# check_allowed(path, key, @list);
+#
+# check that key is one element of list.
+# returns 1 if it is, 0 if key is not in and
+# croak
+#
+
+sub check_allowed {
+    my($path, $key, $v, @vals);
+    ($path, $key, @vals)= @_;
+
+    foreach $v (@vals) {
+	return 1 if ($v eq $key);
+    }
+
+    croak "add: $key is not an allowed value for attribute $path (IDMEF v$IDMEF_VERSION).";
     return 0;
+}
+
+
+
+##----------------------------------------------------------------------------------------
+##
+## set(hash, tagpath, value)
+## 
+## ARGS:
+##   hash:    a hash representation of an IDMEF message, as received from new or in
+##   tagpath: a string obtained by concatenating the names of the nested tags, from the
+##            Alert tag down to the closest tag to value.
+##   value:   the value (content of a tag, or value of an attribute) of the last tag
+##            given in tagpath
+##
+## RETURN:
+##   0 if the field was correctly changed, croaks otherwise.
+##
+## DESC:
+##   The set() call follows the first occurence of the node path described by
+##   <tagpath> and attempts at changing the corresponding content or attribute value.
+##   If the first occurence of <tagpath> does not lead to any existing node, set()
+##   croaks. Check that the node or attribute exists with contains() first.
+##   If you want to create an attribute value or a node content where there was none,
+##   use add() instead.
+##   
+## RESTRICTIONS:
+##   set() only allows you to reach and change the attribute or content of the first
+##   occurence of a given tagpath. If this tagpath occurs multiple time, you will 
+##   not be able to modify the other occurences. Yet this should be able for most
+##   applications. Furthermore, set() cannot be used to create any new value/content.
+##
+## EXAMPLES:
+##
+##   my $idmef = new XML::IDMEF();
+##
+##   $idmef->add("AlertAdditionalData", "value");           # content add first
+##   $idmef->add("AlertAdditionalDatatype", "string");      # ok
+##   $idmef->add("AlertAdditionalDatameaning", "meaning");  # ok
+##
+##   # change AdditionalData's content value
+##   $idmef->set("AlertAdditionalData", "new value");
+##
+
+sub set {
+    my($idmef, $path, $value) = @_;
+    my($root, $type, $att, @tagpath, $node, $n);
+
+    # did we get a path?
+    croak "set: you did not give any path."
+	if (!defined($path));
+
+    $path  = $ROOT.$path;
+    $root  = $idmef->{"DOM"}->getDocumentElement;
+
+    # is this a known tagpath?
+    croak "set: $path is not a known IDMEF tag path (IDMEF v$IDMEF_VERSION)."
+	if (!exists($EXPAND_PATH->{$path}));
+    
+    # is it a content or attribute?
+    ($type, @tagpath) = @{$EXPAND_PATH->{$path}};
+
+    croak "set: $path does not lead to an attribute nor to an authorized node content."
+        if ($type eq 'N');
+    
+    # did we get a value?
+    croak "set: you did not provide any value."
+        if (!defined($value));
+    
+    # check if value is valid
+    if (exists($CHECK_VALUE->{$path})) {
+	check_allowed($path, $value, @{$CHECK_VALUE->{$path}});
+    }
+    
+    $att = pop @tagpath
+	if ($type eq 'A');
+
+    $node = find_node($root, @tagpath);
+
+    # if node does not exists, croaks
+    croak "set: there is no node at path $path. use add() first."
+	if (!defined($node));
+
+    # let's change the content or attribute
+    if ($type eq 'A') {
+
+	# does the attribute exists?
+	croak "set: the attribute at path $path has no value. use add() first."
+	    if ($node->getAttribute($att) eq "");
+
+	# set its value
+	$node->setAttribute($att, $value);
+	return 0;
+
+    } elsif ($type eq 'C') {
+
+	# does this node has a text node?
+	foreach $n ($node->getChildNodes()) {	    
+	    if ($n->getNodeType() == TEXT_NODE) {  
+		$n->setData($value);
+		return 0;
+	    }
+	}
+
+	croak "set: the node at path $path has no content. use add() first.";
+    }
+    
+    # should never reach here
+    croak "set: internal error.";
+}
+
+
+
+##----------------------------------------------------------------------------------------
+##
+## get(hash, tagpath, value)
+## 
+## ARGS:
+##   hash:    a hash representation of an IDMEF message, as received from new or in
+##   tagpath: a string obtained by concatenating the names of the nested tags, from the
+##            Alert tag down to the closest tag to value.
+##   value:   the value (content of a tag, or value of an attribute) of the last tag
+##            given in tagpath
+##
+## RETURN:
+##   a string: the content of the node or value of the attribute, undef if there is
+##   no such value, and croaks if error.
+##
+## DESC:
+##   The get() call follows the first occurence of the node path described by
+##   <tagpath> and attempts at retrieving the corresponding content or attribute value.
+##   If the first occurence of <tagpath> does not lead to any existing node, get()
+##   returns undef. But this does not mean that the value does not exists in an other
+##   occurence of the pagpath.
+##   
+## RESTRICTIONS:
+##   get() only allows you to reach and retrieve the attribute or content of the first
+##   occurence of a given tagpath. If this tagpath occurs multiple time, you will 
+##   not be able to retrieve the other occurences. Yet this should be able for most
+##   applications.
+##
+## EXAMPLES:
+##
+##   my $idmef = new XML::IDMEF();
+##
+##   $idmef->add("AlertAdditionalData", "value");           # content add first
+##   $idmef->add("AlertAdditionalDatatype", "string");      # ok
+##   $idmef->add("AlertAdditionalDatameaning", "meaning");  # ok
+##
+##   # change AdditionalData's content value
+##   $idmef->get("AlertAdditionalData");
+##
+
+sub get {
+    my($idmef, $path, $value) = @_;
+    my($root, $type, $att, @tagpath, $node, $n);
+
+    # did we get a path?
+    croak "get: you did not give any path."
+	if (!defined($path));
+
+    $path  = $ROOT.$path;
+    $root  = $idmef->{"DOM"}->getDocumentElement;
+
+    # is this a known tagpath?
+    croak "get: $path is not a known IDMEF tag path (IDMEF v$IDMEF_VERSION)."
+	if (!exists($EXPAND_PATH->{$path}));
+    
+    # is it a content or attribute?
+    ($type, @tagpath) = @{$EXPAND_PATH->{$path}};
+
+    croak "get: $path does not lead to an attribute nor to an authorized node content."
+        if ($type eq 'N');
+    
+    $att = pop @tagpath
+	if ($type eq 'A');
+
+    $node = find_node($root, @tagpath);
+
+    # if node does not exists, return undef
+    return undef
+	if (!defined($node));
+
+    # let's fetch the content or attribute
+    if ($type eq 'A') {
+	return $node->getAttribute($att);
+
+    } elsif ($type eq 'C') {
+
+	# does this node has a text node?
+	foreach $n ($node->getChildNodes()) {	    
+	    if ($n->getNodeType() == TEXT_NODE) {  
+		return $n->getData;
+	    }
+	}
+
+	return undef;
+    }
+    
+    # no content in this node
+    return undef;
 }
 
 
@@ -1449,7 +1664,6 @@ sub search_for_path {
 ##   randomly generated ID number. The code for the ID number generator is actually 
 ##   inspired from Sys::UniqueID. If no IDMEF type is given, "Alert" is assumed as default.
 ##
-##
 
 sub create_ident {
     my($id, $idmef, $name, $netaddr);
@@ -1458,15 +1672,14 @@ sub create_ident {
     $name = $idmef->get_type();
     $name = "Alert" if (!defined $name);
 
-    # code cut n paste from Sys::UniqueID
+    # code cut n paste from Sys::UniqueID. replaced IP with random number.
     # absolutely ensure that id is unique: < 0x10000/second
-    #$netaddr= sprintf '%02X%02X%02X%02X', (split /\./, hostip);
-    $netaddr = int(rand 10000000); # random instead of ip
+    $netaddr = int(rand 10000000);
 
-    unless(++$idnum < 0x10000) { sleep 1; $idnum= 0; }
-    $id =  sprintf '%012X%s%08X%04X', time, $netaddr, $$, $idnum;
+    unless(++$ID_COUNT < 0x10000) { sleep 1; $ID_COUNT= 0; }
+    $id =  sprintf '%012X%s%08X%04X', time, $netaddr, $$, $ID_COUNT;
 
-    add($idmef, $name."ident", $id);        
+    $idmef->add($name."ident", $id);        
 }
 
 
@@ -1509,16 +1722,240 @@ sub create_time {
 
     # seconds between 1900-01-01 and 1970-01-01
     $utc = $utc + 2208988800;
-    # translate utc to hex!!
+    # translate utc to hex
     $utc = sprintf "%x", $utc;
 
     add($idmef, $name."CreateTimentpstamp", "0x$utc.0x0");    
 }
 
-sub padd_with_zero {
-    my $d = $_[0];
-    $d = "0".$d if (length($d) == 1);    
-    return $d;
+
+
+##----------------------------------------------------------------------------------------
+##
+## to_hash(<hash>)
+##
+## ARGS:
+##   <hash>  hash containing an IDMEF message in XML::Simple representation
+##
+## RETURN:
+##   a hash enumerating all the contents and attributes of this IDMEF message.
+##   each key is a concatenated sequence of tags leading to the content/attribute,
+##   and the corresponding value is the content/attribute itself.
+##   all IDMEF contents and values are converted from IDMEF format (STRING or BYTE)
+##   back to the original ascii string.
+##
+## EXAMPLES:
+##
+## <IDMEF-message version="0.5">
+##  <Alert ident="myalertidentity">
+##    <Target>
+##      <Node category="dns">
+##        <name>node2</name>
+##      </Node>
+##    </Target>
+##    <AdditionalData meaning="datatype1">data1</AdditionalData>
+##    <AdditionalData meaning="datatype2">data2</AdditionalData>
+##  </Alert>
+## </IDMEF-message>
+##
+## becomes:
+##
+## { "version"                    => [ "0.5" ],
+##   "Alertident"                 => [ "myalertidentity" ],
+##   "AlertTargetNodecategory"    => [ "dns" ],
+##   "AlertTargetNodename"        => [ "node2" ],
+##   "AlertAdditionalDatameaning" => [ "datatype1", "datatype2" ],   #meaning & contents are
+##   "AlertAdditionalData"        => [ "type1", "type2" ],           #listed in same order
+## }
+##
+##
+
+sub to_hash {
+    my $idmef  = shift;
+    my $result = {};
+    my $root   = $idmef->{"DOM"}->getDocumentElement;
+
+    dom_to_hash($root, $result, "");
+
+    return $result;
+}
+    
+
+#----------------------------------------------------------------------------------------
+#
+# dom_to_hash($node, $result, $path)
+#
+# explore node and add its attributes and content to $result, and
+# explore recursively each of node's children.
+#
+
+sub dom_to_hash {
+    my($node, $result, $path) = @_;
+    my($n, $type);
+
+    return if (!defined($node));
+
+    # explore node's attributes
+    foreach $n ($node->getAttributes->getValues) {
+	add_to_result($result, $path.$n->getName, $n->getValue);	    
+    }
+
+    # explore node's children
+    foreach $n ($node->getChildNodes()) {
+
+	$type = $n->getNodeType();
+
+	if ($type == TEXT_NODE) {	    
+	    # first check if the DTD accepts content for this node
+	    # this is to avoid all the '\n' that DOM::Parser consider
+	    # as content.
+	    if (@{$EXPAND_PATH->{$ROOT.$path}}[0] eq 'C') {
+		add_to_result($result, $path, $n->getData);
+	    }
+	} elsif ($type == ELEMENT_NODE) {
+	    dom_to_hash($n, $result, $path.$n->getTagName);
+	}
+    }
+}
+
+sub add_to_result {
+    my($result, $path, $val) = @_;
+
+    if (exists($result->{$path})) {
+	push @{$result->{$path}}, $val;
+    } else {
+	$result->{$path} = [ $val ];
+    }
+}
+
+
+
+##=========================================================================================
+##
+##  BACKWARD COMPATIBILIY FUNCTIONS 
+##
+##=========================================================================================
+
+##
+##
+## CLASS FUNCTIONS:
+## ----------------
+##
+
+# wrapper for contains()
+sub at_least_one {
+    return contains(@_);
+}
+
+##
+##
+## EXPORTED FUNCTIONS:
+## -------------------
+##
+
+# wrapper for extend_dtd()
+sub extend_idmef {   extend_dtd(@_); }
+
+##----------------------------------------------------------------------------------------
+##
+## <byte_string> = byte_to_string(<bytes>)
+##
+## ARGS:
+##   <bytes>    a binary string
+##
+## RETURN:
+##   <byte_string>: the string obtained by converting <bytes> into its IDMEF representation,
+##   refered to as type BYTE[] in the IDMEF rfc.
+##
+
+sub byte_to_string {
+    return join '', map( { "&\#$_;" } unpack("C*", $_[0]) ); 
+}
+
+##----------------------------------------------------------------------------------------
+##
+## <xmlstring> = xml_encode(<string>)
+##
+## ARGS:
+##   <string>   a usual string
+##
+## RETURN:
+##   <xmlstring>: the xml encoded string equivalent to <string>. 
+##
+## DESC:
+##   You don't need this function if you are using add() calls (which already calls it).
+##   To convert a string into an idmef STRING, xml_encode basically replaces
+##   characters:         with:
+##         &                 &amp;
+##         <                 &lt;
+##         >                 &gt;
+##         "                 &quot;
+##         '                 &apos;
+##   and all non printable characters (ie charcodes >126 or <32 except 10) into
+##   the corresponding &#x00XX; form.
+##
+
+# create a lookup array, start with filling it with xml encoded chars 
+my @xml_enc = map { sprintf("&\#x00%.2x;", $_) } 0..255;
+    
+# map the printable characters to themselves
+# NOTE: XML standard says encode all chars < 32 except 10, and all > 126 
+for (10,32..126) {
+    $xml_enc[$_] = chr($_);
+}
+
+# the special xml characters maps to their own encodings
+$xml_enc[ord('&')]  = "&amp;";
+$xml_enc[ord('<')]  = "&lt;";
+$xml_enc[ord('>')]  = "&gt;";
+$xml_enc[ord('"')]  = "&quot;";
+$xml_enc[ord('\'')] = "&apos;";
+
+sub xml_encode {
+    my ($st) = @_;
+    return join('', map { $xml_enc[ord($_)]} ($st =~ /(.)/gs));
+}
+
+##----------------------------------------------------------------------------------------
+##
+## <string> = xml_decode(<xmlstring>)
+##
+## ARGS:
+##   <xmlstring>  a xml encoded IDMEF STRING
+##
+## RETURN:
+##   <string>     the corresponding decoded string
+##
+## DESC:
+##   You don't need this function with 'to_hash' (which already calls it).
+##   It decodes <xmlstring> into a string, ie replace the following
+##   characters:         with:
+##         &amp;              &
+##         &lt;               <
+##         &gt;               >
+##         &quot              "
+##         &apos              '
+##         &#XX;              XX in base 10
+##         &#xXXXX;           XXXX in base 16
+##   It also decodes strings encoded with 'byte_to_string'
+##
+
+sub xml_decode {
+    my ($st) = @_;
+
+    if (defined $st) {
+	
+	$st =~ s/&amp\;/&/gs;
+	$st =~ s/&lt\;/</gs;
+	$st =~ s/&gt\;/>/gs;
+	$st =~ s/&quot\;/\"/gs;
+	$st =~ s/&apos\;/\'/gs;
+	
+	$st =~ s/&\#x(.{4});/chr(hex $1)/ges;
+	$st =~ s/&\#(.{2,3});/chr($1)/ges;
+    }
+
+    return $st;
 }
 
 
@@ -1542,20 +1979,24 @@ XML::IDMEF - A module for building/parsing IDMEF messages
 
 =head1 QUICK START
 
-Below is an example of Alert IDMEF message.
+Below is an example of an Alert IDMEF message.
 
-    <IDMEF-Message version="0.5">
-      <Alert>
-        <AdditionalData meaning="data2" type="string">value2</AdditionalData>
-        <AdditionalData meaning="data1" type="string">value1</AdditionalData>
-        <Target>
-          <Node>
-            <name>mynode</name>
-          </Node>
-        </Target>
-        <Analyzer model="myids" />
-      </Alert>
-    </IDMEF-Message>
+
+  <?xml version="1.0" encoding="UTF-8"?>
+  <!DOCTYPE IDMEF-Message PUBLIC "-//IETF//DTD RFC XXXX IDMEF v1.0//EN" "idmef-message.dtd">
+  <IDMEF-Message>
+    <Alert>
+      <Analyzer model="myids"/>
+      <Target>
+        <Node>
+          <name>mynode</name>
+        </Node>
+      </Target>
+      <AdditionalData meaning="data2" type="string">value2</AdditionalData>
+      <AdditionalData meaning="data1" type="string">value1</AdditionalData>
+    </Alert>
+  </IDMEF-Message>
+
 
 The previous IDMEF message can be built with the following code snipset:
 
@@ -1575,42 +2016,47 @@ To automatically insert an Alert ident tag and set the CreateTime class to the c
     $idmef->create_ident();
     $idmef->create_time();
 
-and you will get:
+and you will get (for example):
 
-    <IDMEF-Message version="0.5">
-      <Alert ident="00003D9047B8722743900005A3F0001">
-        <AdditionalData meaning="data2" type="string">value2</AdditionalData>
-        <AdditionalData meaning="data1" type="string">value1</AdditionalData>
-        <CreateTime ntpstamp="0xc4fd2d38.0x0">2002-08-24T11:08:40Z</CreateTime>
-        <Target>
-          <Node>
-            <name>mynode</name>
-          </Node>
-        </Target>
-        <Analyzer model="myids" />
-      </Alert>
-    </IDMEF-Message>
+  <?xml version="1.0" encoding="UTF-8"?>
+  <!DOCTYPE IDMEF-Message PUBLIC "-//IETF//DTD RFC XXXX IDMEF v1.0//EN" "idmef-message.dtd">
+  <IDMEF-Message>
+    <Alert ident="00003EDDDB4F10115110000780D0002">
+      <Analyzer model="myids"/>
+      <CreateTime ntpstamp="0xc28859cf.0x0">2003-06-04-T11:43:11Z</CreateTime>
+      <Target>
+        <Node>
+          <name>mynode</name>
+        </Node>
+      </Target>
+      <AdditionalData meaning="data2" type="string">value2</AdditionalData>
+      <AdditionalData meaning="data1" type="string">value1</AdditionalData>
+    </Alert>
+  </IDMEF-Message>
+
 
 =head1 DESCRIPTION
 
-IDMEF.pm is an interface for simply creating and parsing IDMEF messages. IDMEF is an XML based standard for representing Intrusion Detection related messages (http://www.silicondefense.com/idwg/).
+IDMEF.pm is an interface for simply creating and parsing IDMEF messages. IDMEF is an XML based protocol designed mainly for representing Intrusion Detection (IDS) alert messages (http://www.silicondefense.com/idwg/).
 
-IDMEF.pm is compliant with IDMEF v0.5, and hence provides calls for building Alert, ToolAlert, CorrelationAlert, OverflowAlert and Heartbeat IDMEF messages.
+IDMEF.pm is compliant with IDMEF v1.0, and hence provides calls for building Alert, ToolAlert, CorrelationAlert, OverflowAlert and Heartbeat IDMEF messages.
     
-This interface has been designed for simplifying the task of translating a key-value based format to its idmef representation, which is the most common situation when writing a log export module for a given software. A typical session involves the creation of a new IDMEF message, the initialisation of some of its fields and its conversion into an IDMEF string (see example in QUICK START).
+This API has been designed for simplifying the task of translating a key-value based format to its idmef representation, which is the most common situation when writing a log export module for a given IDS software. A typical session involves the creation of a new IDMEF message, the initialisation of some of its fields and the addition of new IDMEF tags to this message, while parsing some other native message.
 
-An interface to load and parse an IDMEF message is also provided (with the 'to_hash' function).
+An interface to load and parse an IDMEF message is also provided.
 
-This module contains a generic XML DTD parser and includes a class based definition of the IDMEF DTD. It can hence easily be upgraded or extended to support new XML nodes. For information on how to extend IDMEF with IDMEF.pm, read the documentation in the source code.
+The API used in XML::IDMEF is in no way standard. It does not follow any of the SAX or DOM philosophy, since it is neither based on a tree representation nor on an event oriented parser (at least as seen from the outside). It instead gives a linear approach toward the XML object, and uses inbuilt knowledge about a given XML DTD (IDMEF in our case) to make proper choices when building the message. This simplifies the task of building weel formed XML messages, by taking care on your behalf of tasks such as building intermediary nodes in an XML tree, or inserting nodes in the right, DTD compliant order.
+
+This module contains a generic XML DTD parser and includes a simplified node based representation of the IDMEF DTD. It can hence easily be upgraded or extended to support new XML nodes or other DTDs. For information on how to use the XML::IDMEF API with other XML DTDs, read the documentation in the source code :) Yet, beware that the internal DTD representation is a *simplified* DTD, and can not translate all the subtilities that may be defined in XML DTDs. This representation is enough for representing most simple DTDs, such as IDMEF, but not for more complex DTDs. In particular, it considers all attributes as of type CDATA, and does not support complex children ordering and occurence policies.
     
-This code is distributed under the BSD license, and with the support of Proact Defcom AB, Stockholm, Sweden.
+This code is distributed under the BSD license.
 
 =head1 EXPORT
 
-    xml_encode
-    xml_decode
-    byte_to_string
-    extend_idmef	
+    extend_dtd	
+    set_doctype_name
+    set_doctype_sysid
+    set_doctype_pubid
 
 =head1 AUTHOR
 
@@ -1618,19 +2064,26 @@ Erwan Lemonnier - erwan@cpan.org
 
 =head1 LICENSE
 
-This code was developed with the support of Proact Defcom AB, Stockholm, Sweden, and is released under the BSD license.
+This code is released under the BSD license.
 
 =head1 SEE ALSO
 
-XML::Simple, XML::Parser, XML::Parser::Expat, libexpat
+XML::DOM, XML::Parser
 
 =head1 SYNOPSIS
 
-In the following, function calls and function parameters are passed in a perl object-oriented fashion. Hence, some functions (object methods) are said to not take any argument, while they in fact take an IDMEF object as first argument. Refer to the examples in case of confusion. The function listed at the end (C<xml_encode>, C<xml_decode>, C<byte_to_string> are on the other hand class methods, and should not be called on an IDMEF object.
+In the following, function calls and function parameters are passed in a perl object-oriented fashion. Hence, some functions (object methods) are said to not take any argument, while they in fact take an IDMEF object as first argument. Refer to the examples in case of confusion. The functions listed at the end (C<xml_encode>, C<xml_decode>, C<byte_to_string> are on the other hand class methods, and should not be called on an IDMEF object.
+
+Rather than returning with non null error codes, these API calls will raise an exception if an error is encountered. These exceptions will either come from XML::DOM or XML::IDMEF, depending on at which level they occured. Exceptions generated by XML::IDMEF are normally caused by you trying to create an XML message that is not a valid IDMEF message. In practice, it means these methods will croak if you try to do something that goes against the IDMEF DTD. So take care of putting all your IDMEF generation code inside 'eval {};' blocks.
+
 
 =head1 OBJECT METHODS
 
 =over 4
+
+
+
+
 
 =head2 B<new>()
 
@@ -1644,7 +2097,7 @@ a new empty IDMEF message.
 
 =item B<DESC>
 
-C<new> creates and returns a new empty IDMEF message. Use C<add()>, C<create_ident()> and C<create_time()> to add fields to this message.
+C<new> creates and returns a new empty but valid IDMEF message, ie containing an xml and a doctype declarations. Use C<add()>, C<create_ident()> and C<create_time()> to add fields to this message.
 
 =item B<EXAMPLES>
 
@@ -1669,12 +2122,12 @@ the IDMEF object corresponding to this IDMEF message.
 
 =item B<DESC>
 
-C<in> creates a new IDMEF message from either a string C<STRING> or a file located at the path C<PATH>. If no argument is provided, an empty IDMEF message is created and returned.
+C<in> creates a new IDMEF message from either a string C<STRING> or a file located at the path C<PATH>. If no argument is provided, an empty IDMEF message is created and returned. If the parsed message does not contain any xml or doctype declarations, the missing declarations will be added.
 
 =item B<EXAMPLES>
 
  my $idmef = (new XML::IDMEF)->in("idmef.file");
- my $idmef = $idmef->in();
+ my $idmef = $idmef->in("<IDMEF-Message/>");
 
 =back
 
@@ -1714,7 +2167,7 @@ C<out> returns the IDMEF message as a string.
 
 =item B<DESC>
    
-C<create_ident> generates a unique IDMEF ident tag and inserts it into this IDMEF message. The tag is generated base on the local time, a random number, the process pid and an internal counter. If the IDMEF message does not yet have a type, it will become 'Alert' by default.
+C<create_ident> generates a unique IDMEF ident tag and inserts it into this IDMEF message. The tag is generated based on the local time, a random number, the process pid and an internal counter. If the IDMEF message does not yet have a type, it will become 'Alert' by default.
 
 =item B<EXAMPLES>
 
@@ -1785,7 +2238,7 @@ I<$value>: the value (content of a tag, or value of an attribute) of the last ta
 
 =item B<RETURN>
    
-1 if the field was correctly added, 0 otherwise.
+0 if the field was correctly added. Otherwise it croaks, because the node you wanted to add goes against the IDMEF DTD. Use 'eval {};' blocks to catch this exceptions.
 
 =item B<DESC>
 
@@ -1793,13 +2246,19 @@ Each IDMEF content/value of a given IDMEF message node can be created through an
 
 The C<add> call was designed for easily building a new IDMEF message while parsing a log file, or any data based on a key-value format.
 
-=item B<RESTRICTIONS>
+=item B<DISCUSSION>
 
-C<add> cannot be used to change the value of an already existing content or attribute. An attempt to run add() on an attribute that already exists will just be ignored. Contents cannot be changed either, but a new tag can be created if you are adding an idmef content that can occur multiple time (ex: UserIdname, AdditionalData...).
+C<add> is used for creating all the nodes along a given tag path, and setting the content of the last node, or one of its attributes. C<add> can also be used to create a new empty IDMEF node by calling C<add> with the appropriate tag path and no value.
+
+When one tag path occurs multiple times in an IDMEF object, the C<add> calls only affects the last one created.
+
+=item B<DUPLICATED TAG PATH>
+
+C<add> cannot be used to change the value of an already existing content or attribute. If you run C<add> on an attribute that already exists, XML::IDMEF will try to duplicate one of the parent nodes of the attribute, and set the attribute to the new node hence created. If the IDMEF DTD does not allow this node path to be duplicated, XML::IDMEF croaks. The same stands true when trying to add a content to a node path where the node already has a content. XML::IDMEF will try to duplicate this node path. 
 
 =item B<SPECIAL CASE: AdditionalData>
 
-AdditionalData is a special tag requiring at least 2 add() calls to build a valid node. In case of multiple AdditionalData delarations, take care of building AdditionalData nodes one at a time, and always begin by adding the "AddtitionalData" field (ie the tag content). Otherwise, the idmef key insertion engine will get lost, and you will get scrap.
+AdditionalData is a special tag requiring at least 2 add() calls to build a valid node. In case of multiple AdditionalData delarations, take care of building AdditionalData nodes one at a time.
 
 As a response to this issue, the 'add("AlertAdditionalData", "value")' call accepts an extended syntax compared with other calls:
 
@@ -1830,28 +2289,90 @@ The use of add("AlertAdditionalData", <arg1>, <arg2>, <arg3>) is prefered to the
 
  # AdditionalData case:
  # DO:
+ $idmef->add("AlertAdditionalData", "value");           # creating first AdditionalData node
+ $idmef->add("AlertAdditionalDatatype", "string");      
+ $idmef->add("AlertAdditionalDatameaning", "meaning");  
+
+ $idmef->add("AlertAdditionalData", "value2");          # creating second AdditionalData node
+ $idmef->add("AlertAdditionalDatatype", "string");      
+ $idmef->add("AlertAdditionalDatameaning", "meaning2"); 
+
+ # or BETTER:
+ $idmef->add("AlertAdditionalData", "value", "meaning", "string");  
+ $idmef->add("AlertAdditionalData", "value2", "meaning2");          
+
+=back
+
+
+
+
+=head2 $idmef->B<set>($tagpath, $value)
+
+=over 4
+
+=item B<ARGS>
+
+I<$idmef>: a hash representation of an IDMEF message, as received from C<new> or C<in>.
+
+I<$tagpath>: a string obtained by concatenating the names of the nested XML tags, from the Alert tag down to the closest tag to value, and leading to either a valid IDMEF attribute or a valid content node.
+
+I<$value>: the value (content of a tag, or value of an attribute) of the last tag given in tagpath.
+
+=item B<RETURN>
+   
+0 if the field was correctly changed. Otherwise it croaks, because the node you wanted to add goes against the IDMEF DTD. Use 'eval {};' blocks to catch this exceptions.
+
+=item B<DESC>
+
+The C<set()> call follows the first occurence of the node path described by <tagpath> and attempts at changing the corresponding content or attribute value. If the first occurence of <tagpath> does not lead to any existing node or attribute, set() croaks. Check first with C<contains()> that the node or attribute exists. If you want to create an attribute value or a node content where there was none, use C<add()> and not C<set()>.
+
+=item B<RESTRICTIONS>
+
+C<set()> only allows you to reach and change the attribute or content of the first occurence of a given tagpath (ie the last one created). If this tagpath occurs multiple time, you will  not be able to modify the other occurences. Yet this should be able for most applications. Furthermore, C<set()> cannot be used to create any new value/content.
+
+=item B<EXAMPLES>
+
+ my $idmef = new XML::IDMEF();
+
  $idmef->add("AlertAdditionalData", "value");           # content add first
  $idmef->add("AlertAdditionalDatatype", "string");      # ok
  $idmef->add("AlertAdditionalDatameaning", "meaning");  # ok
 
- $idmef->add("AlertAdditionalData", "value2");          # content add first
- $idmef->add("AlertAdditionalDatatype", "string");      # ok
- $idmef->add("AlertAdditionalDatameaning", "meaning2"); # ok
+ # change AdditionalData's content value
+ $idmef->set("AlertAdditionalData", "new value");
 
- # or BETTER:
- $idmef->add("AlertAdditionalData", "value", "meaning", "string");  # VERY GOOD
- $idmef->add("AlertAdditionalData", "value2", "meaning2");          # VERY GOOD (string type is default)
+=back
 
 
- # DO NOT DO:
- $idmef->add("AlertAdditionalData", "value");           # BAD!! content should be declared first
- $idmef->add("AlertAdditionalDatameaning", "meaning2"); # BAD!! content first!
 
- # DO NOT DO:
- $idmef->add("AlertAdditionalData", "value");           # BAD!!!!! mixing node declarations
- $idmef->add("AlertAdditionalData", "value2");          # BAD!!!!! for value & value2
- $idmef->add("AlertAdditionalDatatype", "string");      # BAD!!!!! 
- $idmef->add("AlertAdditionalDatatype", "string");      # BAD!!!!!
+=head2 $idmef->B<get>($tagpath)
+
+=over 4
+
+=item B<ARGS>
+
+I<$idmef>: a hash representation of an IDMEF message, as received from C<new> or C<in>.
+
+I<$tagpath>: a string obtained by concatenating the names of the nested XML tags, from the Alert tag down to the closest tag to value, and leading to either a valid IDMEF attribute or a valid content node.
+
+=item B<RETURN>
+
+a string: the content of the node or value of the attribute, undef if there is no such value, and croaks if error.
+   
+=item B<DESC>
+   
+The C<get()> call follows the first occurence of the node path described by I<$tagpath> and attempts at retrieving the corresponding content or attribute value. If the first occurence of I<$tagpath> does not lead to any existing node, C<get()> returns undef. But this does not mean that the value does not exists in an other occurence of the pagpath.
+
+C<get()> only allows you to reach and retrieve the attribute or content of the first occurence of a given tagpath. If this tagpath occurs multiple time, you will not be able to retrieve the other occurences. Yet this should be able for most applications. 
+
+=item B<EXAMPLES>
+
+ my $idmef = new XML::IDMEF();
+
+ $idmef->add("AlertAdditionalData", "value", "meaning"); 
+
+ # get AdditionalData's content value
+ $idmef->get("AlertAdditionalData");
 
 =back
 
@@ -1891,7 +2412,7 @@ the IDMEF message flattened inside a hash.
 
 =item B<DESC>
    
-C<to_hash> returns a hash enumerating all the contents and attributes of this IDMEF message. Each key is a concatenated sequence of XML tags (a 'tagpath', see C<add()>) leading to the content/attribute, and the corresponding value is an array containing the content/attribute itself. In case of multiple occurences of one 'tagpath', the corresponding values are listed as elements of the array (See the example). All IDMEF contents and values are converted from IDMEF format (STRING or BYTE) back to the original ascii string.
+C<to_hash> returns a hash enumerating all the contents and attributes of this IDMEF message. Each key is a concatenated sequence of XML tags (a 'tagpath', see C<add()>) leading to the content/attribute, and the corresponding value is an array containing the content/attribute itself. In case of multiple occurences of one 'tagpath', the corresponding values are listed as elements of the array (See the example).
 
 =item B<EXAMPLES>
 
@@ -1924,110 +2445,98 @@ C<to_hash> returns a hash enumerating all the contents and attributes of this ID
 
 =head1 CLASS METHODS
 
+=over 4
+
+=head2 COMMENT
+
+The following class methods are designed to access the DTD and XML engine on top of which XML::IDMEF is built. These calls allows you to use the XML::IDMEF API calls to generate/parse other XML formats than IDMEF, by loading a given DTD representation into XML::IDMEF and changing the corresponding DOCTYPE declarations. Avoid using these calls if you can, as they are little documented and subject to changes. No support will be provided on how to use them, and the documentation lies in the source code :) 
 
 
 
-=head2 B<xml_encode>($string)
+=head2 B<set_doctype_name>($string)
 
 =over 4
 
 =item B<ARGS>
    
-I<$string>: a usual string
-
-=item B<RETURN>
-   
-the xml encoded string equivalent to I<$string>. 
+I<$string>: a DOCTYPE name
 
 =item B<DESC>
    
-You do not need this function if you are using add() calls (which already calls it). To convert a string into an idmef STRING, xml_encode basically replaces the following characters: with:
-
-         &                 &amp;
-         <                 &lt;
-         >                 &gt;
-         "                 &quot;
-         '                 &apos;
-
-It also converts all non printable characters (ie charcodes >126 or <32 except 10) into the corresponding &#x00XX; xml form.
-
-REM: if you want to convert data to the BYTE[] format, use 'byte_to_string' instead
+Sets the name field in the XML DOCTYPE declaration of XML messages generated by XML::IDMEF. 'IDMEF-Message' is the default.
 
 =back
 
 
 
 
-=head2 B<xml_decode>($string)
+=head2 B<set_doctype_sysid>($string)
 
 =over 4
 
 =item B<ARGS>
    
-I<$string>: a string encoded using xml_encode.
-
-=item B<RETURN>
-   
-the corresponding decoded string.
+I<$string>: a DOCTYPE system ID
 
 =item B<DESC>
    
-You do not need this function with 'to_hash' (which already calls it). It decodes <xmlstring> into a string, ie replaces the following characters:         with:
-         &amp;              &
-         &lt;               <
-         &gt;               >
-         &quot              "
-         &apos              '
-         &#XX;              XX in base 10
-         &#xXXXX;           XXXX in base 16
-   
-It also decodes strings encoded with 'byte_to_string'
+Sets the system ID field in the XML DOCTYPE declaration of XML messages generated by XML::IDMEF. 'idmef-message.dtd' is the default.
 
 =back
 
 
 
 
-=head2 B<byte_to_string>($bytes)
+=head2 B<set_doctype_pubid>($string)
 
 =over 4
 
 =item B<ARGS>
    
-I<$bytes>: a binary string. 
-
-=item B<RETURN>
-   
-The string obtained by converting <bytes> into its IDMEF representation, refered to as type BYTE[] in the IDMEF rfc.
+I<$string>: a DOCTYPE public ID
 
 =item B<DESC>
    
-converts a binary string into its BYTE[] representation, according to the IDMEF rfc.
+Sets the public ID field in the XML DOCTYPE declaration of XML messages generated by XML::IDMEF. '-//IETF//DTD RFC XXXX IDMEF v1.0//EN' is the default.
 
 =back
 
 
 
 
-=head2 B<extend_subclass>($IDMEF-class, $Extended-subclass)
+=head2 B<extend_dtd>($IDMEF-class, $Extended-subclass)
 
 =over 4
 
 =item B<ARGS>
    
-I<$IDMEF-class>: an extension class DTD
-   
-I<$Extended-subclass>: the name of the extended class's root
+I<$IDMEF-class>: a pseudo representation of an XML DTD that either extands IDMEF or represent a completly different XML protocol.
+    
+I<$Extended-subclass>: the name of the new DTD's root. 'IDMEF-Message' is the default if no value provided.
 
-=item B<RETURN> nothing.
+=item B<RETURN> nothing. croaks if the provided pseudo-DTD contains incoherencies.
 
 =item B<DESC>
 
-C<extend_subclass> allows to extend the IDMEF DTD by registring new subclasses to classes from the standard IDMEF DTD. Internally, the IDMEF.pm module is built around a DTD parser, which reads an XML DTD (written in a proprietary but straightforward format) and provides functions to build and parse XML messages compliant with this DTD. This DTD parser and its API could be used for any other XML format than IDMEF, provided that the appropriate DTD gets loaded in the module. C<extend_subclass> allows to inject new subclasses of pre-loaded DTD classes into the IDMEF.pm DTD engine.
+C<extend_dtd> is used to extend the IDMEF DTD by changing the definition of some IDMEF nodes and/or adding newnodes. It can also be used to load a completly new DTD representation in XML::IDMEF's XML engine, hence making it possible to use the XML::IDMEF API to generate and parse other XML formats then IDMEF.
+Internally, the IDMEF.pm module is built around a DTD parser, which reads an XML DTD (written in a proprietary but straightforward format) and provides calls to build and parse XML messages compliant with this DTD. This DTD parser and its API could be used for (almost) any other XML format than IDMEF, provided that the appropriate DTD gets loaded in the module, and that the DTD can be represented in the pseudo-DTD format used internally by the module. 
+The format of the pseudo-DTD representation is complex and subject to changes. Yet, if you really wish to use these functionalities, you will find proper documentation in the module source code.
 
- ex: extend_sublass($IDMEF-class, $Extended-subclass);
+Example: to add a new node called hexdata to the AdditionalData node, do:
 
-The format of the $xxx-class is too complex to be described here. Refer to the documentation inside the source code.
+    my $ext_dtd = {
+        "AdditionalData" => {
+            ATTRIBUTES  => { "type" => ["string", "boolean", "byte", "character", 
+                                        "date-time", "integer", "ntpstamp",
+                                        "portlist", "real", "xml"],
+                             "meaning" => [],
+                           },
+            CONTENT     => ANY,
+            CHILDREN    => ["hexdata"],
+        }, 
+        "hexdata"        => { CONTENT => PCDATA },
+    };
+    extend_dtd($ext_dtd, "IDMEF-Message");
 
 =back
 

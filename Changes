@@ -35,4 +35,15 @@ Revision history for Perl extension XML::IDMEF.
         - fixed a big bug in 'contains'
         - changed xml_encode to encode non printable characters in xml STRINGs
         - in create_time, corrected bugs with epoch time and month
-        - TODO: add 'get' & 'cmp' methods 
+        - TODO: add 'get' & 'cmp' methods
+
+0.09 2003/06/04
+        - now uses XML::DOM instead of XML::Simple. The later is unable to support
+          the requirement of children element order inside an XML node, and had to be
+          replaced.
+        - implemented get() and set() methods 
+        - updated internal pseudo DTD format to be able to build really valid XML messages
+        - upgraded to IDMEF v1.0
+        - remove some functions from the documentations. they are yet still in the
+          module to maintain backward compatibility.
+        - renamed a few methods. the old names can still be used.
